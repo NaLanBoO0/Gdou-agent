@@ -31,6 +31,14 @@ contextBridge.exposeInMainWorld("gdou", {
 	 */
 	readArtifact: (path: string) => ipcRenderer.invoke("artifact:read", path),
 
+	/**
+	 * Open a delivered artifact in the OS's default application.
+	 *
+	 * Backed by the same `present_files` allowlist as `readArtifact`, so this is
+	 * not a way to launch arbitrary local files from the renderer.
+	 */
+	openArtifact: (path: string) => ipcRenderer.invoke("artifact:open", path),
+
 	/** Profiles available to run. */
 	profiles: () => ipcRenderer.invoke("agent:profiles"),
 

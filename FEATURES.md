@@ -1,4 +1,4 @@
-# GDOU agent 功能清单
+# Gdouwork 功能清单
 
 在 pi 内核之上加了什么，以及每一项是怎么实现的。
 
@@ -57,7 +57,7 @@
 | 26 | pi 能力接线补全 | `kernel/agent.ts`、`config/settings.ts` | 设置真正生效；重试注入；缓存会话亲和；thinkingBudgets 透传 |
 | 27 | **pi 源码 vendoring** | `vendor/pi/`、`scripts/vendor-pi.mjs`、`scripts/check-vendor.mjs` | 按依赖闭包拷入 6 个包（701 文件）+ sha256 清单；只读校验；外部依赖按 pi 的精确版本装进本项目 |
 | 28 | **组合模型 + 专家** | `kernel/recipe.ts`、`experts/` | 会话 = 模式 + 专家；专家**只能收窄**工具集；markdown 三级加载；渐进式披露的前置 |
-| 29 | **工作台外壳** | `renderer/`（tokens/shell/chat/panels 四个 CSS）、`electron/main.ts` | SztuCode 的设计语言：52px 自绘标题栏 + 240px 侧栏 + 主区；无边框窗口；右侧检查器；深浅两套主题 |
+| 29 | **工作台外壳** | `renderer/`（tokens/shell/chat/panels 四个 CSS）、`electron/main.ts` | 冷灰中性设计语言：52px 自绘标题栏 + 240px 侧栏 + 主区；无边框窗口；右侧检查器；深浅两套主题 |
 | 30 | **权限门 + 命令检查器** | `kernel/permission.ts`、`kernel/command-guard.ts`、`kernel/agent.ts` | 有序 5 阶段判定链（主轴是路径归属）；凭据禁读也禁写、任何档位不能越过；命令黑名单五类规则；接在 pi 的 `beforeToolCall` 接缝上 |
 | 31 | **产物交付** | `tools/present.ts`、`electron/main.ts`（预览通道）、`renderer/` | `present_files` 只收绝对路径且全有或全无；产物渲染成卡片；检查器可预览（HTML 走全沙箱 iframe）；预览通道只放行本会话交付过的路径 |
 | 32 | 单实例锁 | `electron/main.ts` | 第二个实例直接退出并把已有窗口拉到前台；两个实例会抢同一批会话文件 |
@@ -74,6 +74,9 @@
 | 43 | **GUI 质感改造** | `renderer/tokens.css`、`renderer/shell.css`、`renderer/chat.css`、`renderer/index.html`、`renderer/app.js` | 侧栏加品牌区（logo 标识 + Beta 徽章）与醒目的**新建对话**主按钮；侧栏**可拖拽调宽**（180–420px，走 `--sidebar-w` CSS 变量，宽度持久化到 localStorage）；对话时间线右侧加**轮次圆点导航**（一点跳转、hover 气泡、上下渐隐遮罩、active 跟随滚动）；补阴影层次 token |
 | 44 | **观测（崩溃/日志/内存）** | `kernel/observability.ts`、`electron/main.ts`、`src/paths.ts` | 三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`：① **崩溃报告**——`uncaughtException`/`unhandledRejection`/`render-process-gone` 同步落盘（异步会丢），单次启动上限 50 条；② **运行日志**——会话启动/模型解析写一行，指纹采样防日志风暴；③ **内存诊断**——heap ≥1.5GB 时写 `process.report`。诊断页加「日志目录」行 |
 | 45 | **子代理（delegate）** | `tools/delegate.ts`、`kernel/agent.ts`、`profiles/builtin.ts` | `delegate` 工具把自包含子任务交给一个**独立上下文**的子代理跑完，返回最终文本。子代理**继承父模式**（不写死 coding，权限面不在用户背后变大）；防递归：`includeDelegate: false` 不含 delegate 本身。**B7 第一个调用点**：`model` 参数可指向 lite 模型。连带把 **general 模式也开放了文件/Shell 工具**——模式从「能力边界」退化成「工作风格」，两个模式主要在提示词上区分 |
+| 46 | **动效（流式光标 + 思考动画）** | `renderer/chat.css`、`renderer/app.js` | 三个动效：① **流式光标**——模型打字时消息末尾竖条闪烁（`token-caret`）；② **思考三点跳动**——thinking 时三个圆点上下跳（`typing-bounce`），思考文本**累积**到同一面板；③ **思考扫光**——thinking 面板一道光带滑过（`thinking-sweep`）。外加消息**淡入上滑**进场、工具卡**运行中紫框/失败红框**状态色 |
+| 47 | **marked 排版 + 工具折叠 + 等待动效** | `renderer/marked.umd.js`、`renderer/app.js`、`renderer/chat.css` | ① **输出排版**——自研 markdown 只支持代码块/加粗，改用 `marked`（vendored 成 `marked.umd.js`），标题/列表/表格/引用/代码高亮全支持；② **工具折叠**——工具调用始终聚合成「正在使用 N 个工具」的折叠卡（运行中三点跳动 + 紫框，结束才落定），不再一个个弹；③ **等待动效**——`run_start` 到首个输出间显示「思考中…」跳动点，模型不思考也不让用户干等 |
+| 48 | **MCP（stdio 客户端）** | `src/mcp/{config,client,schema,tool,index}.ts`、`kernel/agent.ts` | 接 `@modelcontextprotocol/sdk`，把 stdio MCP server 的工具挂成 agent 工具。配置三级作用域（user/project/local）合并 + JSONC 注释 + `${VAR}`/`${VAR:-default}` 扩展；JSON Schema → TypeBox 转换（不支持的关键字宽松降级为 Any）；工具名加 `mcp__<server>__` 前缀防碰撞；broken server 报进 `session.mcpErrors` 而非让会话崩溃 |
 
 ---
 
@@ -605,11 +608,11 @@ general（3 个工具）+ security-audit（要 read/grep/find/ls）→ 0 个，�
 
 `smoke` 新增 **37 条**断言（总数 52 → 89）：解析、收窄、**不能扩大**、空交集、提示词拼接、装配结果、优先级、未知 id、以及项目级文件的发现/覆盖/报错/非 markdown 忽略（跑在临时目录上，不碰用户真实数据）。`check:gui` 新增 **12 条**（总数 109 → 121），真的切换下拉、断言状态行与工具数变化、断言警告出现与消失。`check:tui` 断言状态行显示专家。
 
-### 2.24 工作台外壳（照 SztuCode 重做界面）
+### 2.24 工作台外壳
 
 **为什么是"重做"而不是"加个侧栏"**：原来的界面是一个单列对话页，所有东西挤在一列里——模式选择、工作目录、历史、诊断。功能都在，但没有地方安放"专家 / 自动化 / Skills"这三件正交的事，也没有地方显示"这个会话实际能用哪些工具"。外壳先立起来，功能才有位置。
 
-**设计语言照 SztuCode**：配色、字号、间距、圆角、动效都从那边搬过来，所以两个应用看起来像同一个产品。外壳是 `grid-template: 52px minmax(0,1fr) / 240px minmax(0,1fr)`——标题栏横跨两列，侧栏可以收到 0 宽而主区不动。
+**设计语言**：冷灰中性的配色与统一的字号/间距/圆角/动效 token，全部收敛成 CSS 变量，所以深浅两套主题共用一套排版。外壳是 `grid-template: 52px minmax(0,1fr) / 240px minmax(0,1fr)`——标题栏横跨两列，侧栏可以收到 0 宽而主区不动。
 
 ```
 标题栏   窗口标记 · 汉堡 · 文件/视图/帮助 · 拖拽区 · 最小化/最大化/关闭
@@ -627,7 +630,7 @@ general（3 个工具）+ security-audit（要 read/grep/find/ls）→ 0 个，�
 
 **自动化页和 Skills 页是诚实的待做页**，不是空白页：它们说明这个功能会怎么做、以及已经定下的约束（运行时触发、产出单独一个概念、`allowWrite` 默认关；skills 只允许说明和资源）。一个空白页读起来像坏了，一段说明读起来像还没做——后者才是真的。
 
-**深浅两套主题**：`[data-app-theme]` 在 `<html>` 上，首次启动跟随系统，手动切换后记在 localStorage。SztuCode 默认浅色，所以浅色是默认；深色是一套真正的主题（自己的 surface/border），不是把颜色反过来。
+**深浅两套主题**：`[data-app-theme]` 在 `<html>` 上，首次启动跟随系统，手动切换后记在 localStorage。浅色是默认；深色是一套真正的主题（自己的 surface/border），不是把颜色反过来。
 
 #### 两个不明显的地方
 
@@ -1189,7 +1192,7 @@ fatal: Mode "broken" names a model that does not exist: deepseek/depseek-flash
   删除按钮**只在存了 key 时可用**：环境变量来的 key 没有文件可删，给一个能点的按钮
   等于承诺一次做不到的删除。
 - 编写器右下角**原来的只读模型名变成切换按钮**，弹层按服务商分组列出可用模型，点一下即切
-  （形状照 SztuCode 的 `ModelConfigMenu` 搬；齿轮跳设置页）。列表**只列已配置的服务商**，
+  （弹层按服务商分组列模型；齿轮跳设置页）。列表**只列已配置的服务商**，
   并且明说这一点 —— 列一个调不通的模型是陷阱，失败会推迟到请求时以一个认证错误出现，
   离点它的那次点击很远。
 - 编写器上那个小圆点说的是**这个模型现在能不能调用**，绿＝能。它是问 pi 自己的解析层
@@ -1296,8 +1299,8 @@ fatal: Mode "broken" names a model that does not exist: deepseek/depseek-flash
 
 ### 2.37 GUI 质感（侧栏品牌区、可拖拽宽度、轮次圆点）
 
-对照 SztuCode 的桌面端，把「精致感」缺的几块补上。**配色 token 本来就是冷灰中性**
-（`#f7f9fa` 底 + `#3383e8` 蓝强调，`tokens.css` 注释里写着「ported from SztuCode」），
+对照桌面端的常见做法，把「精致感」缺的几块补上。**配色 token 本来就是冷灰中性**
+（`#f7f9fa` 底 + `#3383e8` 蓝强调，`tokens.css` 里保留了来源说明），
 所以这次不动配色，动的是**布局和动效**——那才是「老土」的来源。
 
 1. **侧栏品牌区**：顶部加 logo 标识 + `GDOU` 名 + `Beta` 徽章，再往下是一枚**贯穿的
@@ -1386,6 +1389,111 @@ tui / tools）全绿。
 验证：`smoke` 327 → 335（+8），覆盖「顶层会话含 delegate / 子代理不含 delegate /
 子代理仍含 load_skill / delegate 返回子代理文本 / delegate 报告子代理模型 /
 delegate 报告子代理模式 / general 会话的子代理继承 general」。
+
+---
+
+### 2.40 动效（流式光标、思考动画、消息进出场）
+
+用户要「模型回答思考的时候都有动效」。三个动效
+keyframes，配色走我们的冷灰 token。
+
+1. **流式光标**（`token-caret`）：模型打字时，`.body.streaming::after` 画一根 7×15 的
+   竖条，`steps(1)` 闪烁——最直接的「它在回答」信号。`assistant_end` 时 `.streaming`
+   连同光标一起摘掉：一条已经完成的回复不该还在「打字」。
+2. **思考三点跳动**（`typing-bounce`）：thinking 时 `.thinking-dots` 三个圆点错峰上下跳。
+   同时把思考文本从「每条 delta 一个新 div」改成**累积到一个面板**——原来思考流式会
+   堆一堆气泡，现在和 assistant 正文一样累积，三个点在整个思考期间一直跳。
+3. **思考扫光**（`thinking-sweep`）：`.thinking` 面板上一道光带从左滑到右（`ease-out`
+   循环），表示「正在思考」。思考结束（`assistant_start`/`text_delta`）时 `state.thinking`
+   清空，光带停。
+
+外加两个状态信号：消息**淡入上滑**进场（`msg-enter`，0.18s），工具卡**运行中紫框 /
+失败红框**（`.tool.running` / `.tool.failed`），结束才落定。
+
+**一个连带修正**：`addThinking` 从「每条 delta 新建容器」改成「累积」，需要 `state.thinking`
+追踪当前面板，并在 `assistant_start`/`text_delta` 时清空——否则思考结束后三点还在跳。
+
+验证：离线校验全绿；`gui-check` 在这个环境跑不到完整一轮（Electron 渲染进程偶发崩），
+但**顺带修掉了 6 条前面几轮累积的过期断言**（脚本化 demo 工具名、Skills 页已从占位变
+真实、专家收窄因 general 加了文件工具而不再「收窄到空」）——这些断言从没被暴露过，
+因为 `check:gui` 一直没能跑完。
+
+---
+
+### 2.41 marked 排版、工具折叠、等待动效
+
+用户提的三个具体问题一次解决，且**换实现方法而不是继续缝补**：
+
+1. **输出排版**：根因是自研 `renderMarkdown` 只认代码块 / 行内代码 / 加粗，模型输出一个
+   带标题、列表、表格的回答就糊成一段。换成 `marked`，
+   把 `marked.umd.js` vendored 进 `renderer/`（CSP 是 `script-src 'self'`，本地文件满足），
+   `renderMarkdown` 一行 `marked.parse(text, { breaks: true })` 替代 40 行正则。补了
+   blockquote / table / hr / strong / img 的样式。
+2. **工具折叠**：原来工具调用「逐个追加、每个一行」，只有 ≥2 个连续才折进 group。改成
+   **工具调用始终进一个「正在使用 N 个工具」的折叠卡**——运行中默认折叠、头部三点跳动 +
+   紫框，结束才落定成「N 次调用」。第一个工具就建 group，不再有「孤立敞开的工具卡」。
+3. **等待动效**：`run_start` 到首个输出之间原本没有任何反馈（尤其 thinkingLevel=off 时，
+   模型既不思考也不立刻出字，用户干等）。加「思考中…」三点跳动占位，`assistant_start` /
+   `text_delta` / `tool_start` 一到就清掉。
+
+**关于 thinking 的决定**：默认 thinkingLevel 是 `off`（省 token、快），所以模型不产出
+thinking 内容、看不到「思考过程」动效。用户选择**只做等待动效**，不开 thinking——
+这是成本与体验的取舍，不是没做。
+
+验证：离线校验全绿，构建通过。
+
+---
+
+### 2.42 产物一键打开
+
+交付的产物以前只能在检查器里**预览**（`artifact:read`），而且超过 2 MB 的文件直接甩一句
+「请直接打开它」——界面上却根本没有「打开」这个动作，PDF、Word、视频、大文件全都打不开。
+
+改法是**加一个打开通道，而不是在预览里继续补**：
+
+- 主进程加 `artifact:open`，用 `shell.openPath` 交给系统默认应用。**复用同一个
+  `present_files` 白名单**，所以它和预览通道一样只能打开模型交付过的路径，不会变成从
+  渲染进程任意启动本地文件的入口——安全边界不变，只是多了一种"怎么用"。
+- preload 暴露 `openArtifact(path)`，和 `readArtifact` 并列。
+- 渲染层：**文件卡片和检查器列表行点击 = 直接打开**（一键）；URL 仍是浏览器 `_blank`。
+  检查器的预览头部加「用系统应用打开」按钮，超大文件不再是一句死话。
+
+验证：`build` / `typecheck` / `smoke` 全绿；`gui-check` 断言改成校验「打开通道拒绝未交付
+路径」和「打开桥接已暴露」，避免无头环境真去拉起编辑器。
+
+---
+
+### 2.43 MCP（stdio 客户端）
+
+对齐清单 I 节里「用现成的」最典型落点：接 `@modelcontextprotocol/sdk`，一个 MCP server 的
+工具立刻变成 agent 的工具，**不需要自己实现任何工具**。本轮只做 **I1（stdio 传输）** 这条
+主干，I2（作用域）/I3（env 扩展）因为「就是读配置这一件事」顺手一起做了，I4（审批）之后再做。
+
+五个模块，职责单一：
+
+- **`config.ts`**：读配置。三级作用域 `~/.gdou-agent/mcp.json` → `<cwd>/.gdou-agent/mcp.json`
+  → `<cwd>/.mcp.json`，后写的覆盖先写的（`disabled: true` 可关掉宽作用域里的同名 server）。
+  JSONC 注释手写剥离（不引依赖）；`${VAR}` / `${VAR:-default}` 在 env 和 command 里展开，
+  key 不用明文写进配置。
+- **`client.ts`**：封装 `StdioClientTransport` + `Client`。拥有子进程生命周期（spawn/connect/
+  close 都在这），调用方不会漏掉进程。`callTool` 把 content 展平为文本（text/image/resource 都处理）。
+- **`schema.ts`**：MCP 的 JSON Schema → TypeBox。**宽松进、严格出**：不认识的 keyword（`format`
+  等）丢弃而非让整个工具不可用；`anyOf`/无 type 的 schema 降级成 `Type.Any()`——让 server 自己
+  拒绝坏参数，好过我们猜错联合类型拒绝好参数。
+- **`tool.ts`**：MCP tool → `AgentTool`。名字加 `mcp__<server>__<tool>` 前缀（两个 server 同名
+  工具不冲突、转录和权限标签都能指出是哪个 server）。`replay: "never"`——server 是第三方
+  stateful 进程，重放结果不确定不重放。
+- **`index.ts`**：编排。连所有 server，坏的**按 server 报错跳过**（一个配错的 server 不该拖垮
+  整个 agent），返回 `{ tools, errors, close }`。
+
+接线在 `createAgent`：MCP 在 `assemble` 前连好（因为要先 `listTools` 才知道挂什么），工具作为
+参数传进 `assemble`，和 `load_skill`/`delegate` 一样**不属于模式的工具集**——它们是用户配置的
+环境，不是模式的契约，所以不受专家收窄。session 新增 `mcpErrors` 字段（坏 server 可见，不是
+静默缺失），`dispose` 时 `mcpClose()` 关掉子进程。
+
+验证：smoke 335 → **349**（+14），用一个手写 JSON-RPC stdio server（`scripts/smoke-mcp-server.mjs`，
+不依赖 SDK server 端）测 client 的 listTools/callTool、config 的 JSONC/env 扩展、schema 转换、
+工具挂载、坏 server 报错不致命。`build` 通过（bundle 6.0→6.6 MB，SDK 引入）。
 
 ---
 
@@ -1575,7 +1683,7 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
 5. **非 Windows 平台**。抓取脚本只钉了 win32-x64 的资产，其他平台会明确报错而不是装错二进制。
 6. ~~vendoring 之后的重新打包~~ —— **已解决（2026-09-23）**。见 4.7：失败的是校验文件而不是二进制，两个镜像环境变量设上之后 `npm run package:dir` 完整跑通，产物在 `release/win-unpacked`（`app.asar` 94.8 MB，`resources/bin` 带 rg / fd）。
 
-   打包产物**已实测**：用 `--remote-debugging-port` 启动 `release/win-unpacked/GDOU-agent.exe`，读回 DOM 确认 `.sztu-shell`、`.sidebar`、`#inspector`、`.titlebar` 与四个导航视图（chat / experts / automation / skills）都在。这一点必须单独验：`check:gui` 驱动的是源码态的 `electron .`，它证明不了 `app.asar` 里那份 bundle——而桌面快捷方式启动的恰恰是后者。
+   打包产物**已实测**：用 `--remote-debugging-port` 启动 `release/win-unpacked/GDOU-agent.exe`，读回 DOM 确认 `.gdou-shell`、`.sidebar`、`#inspector`、`.titlebar` 与四个导航视图（chat / experts / automation / skills）都在。这一点必须单独验：`check:gui` 驱动的是源码态的 `electron .`，它证明不了 `app.asar` 里那份 bundle——而桌面快捷方式启动的恰恰是后者。
 
 **下一步**：
 

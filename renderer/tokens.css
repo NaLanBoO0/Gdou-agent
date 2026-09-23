@@ -1,9 +1,9 @@
 /**
  * Design tokens.
  *
- * The palette, type scale and metrics are ported from the SztuCode desktop app
+ * The palette, type scale and metrics are ported from the shell's desktop app
  * so the two look like the same product. Light is the default because that is
- * SztuCode's default; dark is a real theme rather than an inversion, with its
+ * the shell's default; dark is a real theme rather than an inversion, with its
  * own surfaces and borders.
  *
  * Every colour used anywhere in the shell is a token here. A literal hex

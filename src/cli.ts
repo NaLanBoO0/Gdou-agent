@@ -46,7 +46,7 @@ import {
 import { canRunTui, runTui } from "./tui/index.ts";
 import { bold, cyan, dim, green, red, yellow } from "./ui/style.ts";
 
-const USAGE = `${bold("gdou-agent")} - GDOU agent, a custom agent on the pi kernel
+const USAGE = `${bold("gdou-agent")} - Gdouwork, a custom agent on the pi kernel
 
 Usage:
   gdou-agent [options] [prompt]

@@ -146,7 +146,7 @@ async function selectProfile(
 
 		ui.addChild(picker);
 		ui.setFocus(picker);
-		ui.terminal.setTitle("GDOU agent");
+		ui.terminal.setTitle("Gdouwork");
 		ui.start();
 	});
 }

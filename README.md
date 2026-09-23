@@ -1,4 +1,4 @@
-# GDOU agent
+# Gdouwork
 
 一个跑在你自己机器上的桌面 agent，基于 [pi](https://pi.dev) 内核
 （`pi-ai` + `pi-agent-core` + `pi-coding-agent`）。
@@ -27,7 +27,9 @@ API key 自己提供、存在本机（`~/.gdou-agent/auth.json`），对话记�
 - **模型与凭据** —— 界面上直接填 key（侧栏「设置」，`Ctrl+5`），编写器右下角点模型名就在已配置的服务商之间切换；key 只以掩码显示，没有「读回我的 key」这个通道
 - **扛得住** —— 连着重复的同一次调用会被拦下并告知模型；provider 在产出内容前挂掉会自动换到备用模型
 
-三种入口共用同一个内核：无界面 CLI、终端 TUI、桌面 GUI（可打包成 exe）。
+三种入口共用同一个内核：无界面 CLI、终端 TUI、桌面工作台（Gdouwork，Vue3 前端 + 本地桥）。
+桌面工作台是当前的主 GUI（2026-09 起，取代了此前的 Electron 桌面版，后者仍保留在
+`electron/` + `renderer/`，可继续用 `npm run gui` 打开）。
 
 ## 三条承重的设计决定
 
@@ -54,9 +56,9 @@ API key 自己提供、存在本机（`~/.gdou-agent/auth.json`），对话记�
 | --- | --- |
 | ![产物交付](docs/screenshots/artifacts.png) | ![深色](docs/screenshots/dark.png) |
 
-| 专家 | 诊断 |
+| 技能 | 设置 |
 | --- | --- |
-| ![专家](docs/screenshots/experts.png) | ![诊断](docs/screenshots/diagnostics.png) |
+| ![技能](docs/screenshots/experts.png) | ![设置](docs/screenshots/diagnostics.png) |
 
 更多截图（含变更追踪、工具分组、打包后的实际界面）在
 [`docs/screenshots/`](docs/screenshots)。
@@ -98,8 +100,8 @@ npm run run
 npm run run -- -p general "what is the time in Tokyo?"
 npm run run -- -p coding "summarize this repository"
 
-# 7. 桌面 GUI
-npm run gui
+# 7. 桌面工作台（一键起「本地桥 + 前端」，然后浏览器打开 http://127.0.0.1:5173）
+npm run dev:shell
 ```
 
 想要**联网搜索**的话再加一个搜索服务商的 key（`web_fetch` 不需要）：
@@ -118,7 +120,7 @@ PowerShell 里设置 key 的写法是 `$env:DEEPSEEK_API_KEY="sk-..."`。
 在交互式终端里不带 prompt 启动，就会进入对话界面。
 
 ```
-GDOU agent  built on the pi kernel
+Gdouwork  built on the pi kernel
 
 ctrl+o last tool · ctrl+t all tools · ctrl+l clear · ctrl+c exit · enter send · shift+enter newline
 
@@ -179,65 +181,65 @@ src/tui/
     profile-picker.ts         启动时的模式选择
 ```
 
-## 桌面 GUI
+## 桌面工作台（Gdouwork）
+
+```bash
+# 一键起「本地桥 + 前端」（Ctrl+C 同时停两个）
+npm run dev:shell
+# 然后浏览器打开 http://127.0.0.1:5173
+```
+
+**Gdouwork 由两部分组成**：`shell/` 是一个自绘的 Vue3 工作台（Vite 开发服务器，
+端口 5173），`bridge/server.ts` 是一个本地桥（端口 7438，JSON-RPC 2.0 over
+WebSocket），把同一个 pi 内核包成前端能调的服务。前端**不碰内核代码**，它只跟桥说
+话——这跟老 Electron 版「内核跑在主进程里」是两种接法，内核本身一行没改。
+
+`npm run dev:shell` 会把桥和前端一起拉起来，**别只起其中一个**：桥没起的话，前端
+只会显示「本地服务未连接」，看不出真正原因。桥已被占用时它会直接复用（不会起第二个）。
+
+**桥重启不会丢会话**。每个会话落盘在 `~/.gdou-agent/sessions/`（对话跑完即存），
+桥一重启，前端再往某个会话发消息，桥会**自动从磁盘重建**它再跑——用当前配置重建，
+所以刚保存的 key 对旧会话也立即生效。前端只需刷新页面（或随便点一下导航）即可重连。
+
+想真正开始对话，先在侧栏 **设置** 里填一把 key（保存后编辑框显示「留空保持不变」，
+key 只以掩码展示）。没有 key 时前端仍能浏览界面，桥会自动走脚本化演示传输。
+
+### 旧 Electron 桌面版（可选）
+
+`electron/` + `renderer/` 是 2026-09 之前的桌面 GUI，仍可用：
 
 ```bash
 # 起窗口（会先自动构建）
 npm run gui
-
 # 出安装包 → release/GDOU-agent-0.1.0-setup.exe
 npm run package
 ```
 
-`npm run gui` 走的是 `scripts/launch-gui.mjs`，不是直接 `electron .`——它要先删掉两个会阻止 Electron 启动的环境变量，而 npm script 没有跨平台的写法能做这件事。从 VS Code / Cursor 这类编辑器（或者本项目自己的 agent 宿主）的**内置终端**里跑，环境里就带着 `ELECTRON_RUN_AS_NODE=1`，于是 Electron 以纯 Node 启动，`require("electron")` 拿到的是**二进制路径**而不是 API，报错是
-
-```
-TypeError: Cannot read properties of undefined (reading 'isPackaged')
-```
-
-指着一行没人写错的代码。`NODE_OPTIONS` 是同一类泄漏（里面的 `--require` 钩子能遮蔽 `electron` 模块）。删的时候要 `delete` 而不是置空——**空字符串仍然算「已设置」**，故障原样复现，于是修复看起来像没生效。`check:gui` 出于同样的理由做同样的事。
-
-**跑打包产物而不安装**：`npm run package:dir` 出 `release/win-unpacked/GDOU-agent.exe`，是一个自包含的应用目录，双击即可运行。让桌面快捷方式指向它：
-
-```bash
-npm run shortcut
-```
-
-这一步值得说明。`npm run package` 生成的安装包会把快捷方式指向 `%LOCALAPPDATA%\Programs\...`，那是**打包那一刻的快照**——源码继续往前走之后，快捷方式会静默地一直启动旧版本，界面上看不出任何异常。`npm run shortcut` 改成指向项目里的 `release/win-unpacked`，于是只有一份应用，就在这个文件夹里。
-
-打包时的二进制下载默认走 GitHub。国内网络下拉不到，失败信息还很有误导性（见 FEATURES.md 4.7）。`scripts/package.mjs` 因此默认指向 npmmirror；环境变量里显式设了 `ELECTRON_MIRROR` / `ELECTRON_BUILDER_BINARIES_MIRROR` 时以你的为准。
-
-内核跑在 Electron **主进程内**，不是 sidecar 进程，也不是本地 HTTP 服务。因为内核本来就是 Node/TS，而 Electron 主进程就是 Node——`createAgent()` 原样调用，**内核一行没改**。
-
-渲染进程与内核之间只有一条窄通道：
-
-```
-AgentSession.subscribe(AgentEvent) → webContents.send → preload contextBridge → 渲染进程
-```
-
-安全默认值按 Electron 的推荐收紧：`contextIsolation: true`、`nodeIntegration: false`，preload 只暴露几个具名函数而不是整个 `ipcRenderer`。
+它的启动坑和打包细节（`ELECTRON_RUN_AS_NODE` 环境泄漏、镜像下载、快捷方式指向）见
+`FEATURES.md` §4。新工作台就绪后，这部分主要留给需要 exe 安装包的场景。
 
 ### 界面
 
-外壳照 [SztuCode](https://github.com/) 的工作台重做：52px 自绘标题栏 + 240px 侧栏 + 主区，右侧是可拖拽宽度的检查器。窗口是**无边框**的，标题栏就是窗口边框。
+外壳是自绘的工作台：标题栏 + 侧栏 + 主区，右侧是可拖拽宽度的检查器，深浅两套主题（首次跟随系统，手动切换后记住）。侧栏宽度可拖拽调节并记住。
 
 ```
-标题栏   窗口标记 · 汉堡 · 文件/视图/帮助 · 拖拽区 · 最小化/最大化/关闭
-侧栏     模式切换 · 对话/专家/自动化/Skills · 对话记录 · 底部状态与主题
-主区     工作目录 · 模式/专家选择 · 新对话/历史
-         时间线（735px 居中） · 检查器
-         输入框（Enter 发送 / Shift+Enter 换行，可中止）
+标题栏   窗口标记 · 菜单 · 拖拽区 · 窗口控制
+侧栏     品牌区（logo + Beta）· 新建任务 · 自动化 / 技能 · 会话列表 · 设置
+主区     当前会话 · 时间线（居中）· 检查器
+         输入框（Enter 发送 / Shift+Enter 换行，可中止；模型切换在右下角）
 ```
 
 截图在 [`docs/screenshots/`](docs/screenshots)。
 
-**检查器**显示本次会话（模式/专家/模型/工具数/工作目录）、上下文占用（条 + 字符数 + 进度条）、以及**这个会话实际能用的工具名**。最后一项是重点：专家会收窄工具集，而"工具不见了"和"专家没生效"从外面看是一样的。
+**检查器**显示当前会话（模式/专家/模型/工具数/工作目录）、上下文占用（条 + 字符数 +
+进度条）、以及**这个会话实际能用的工具名**。最后一项是重点：专家会收窄工具集，而
+"工具不见了"和"专家没生效"从外面看是一样的。交付的产物也在检查器里预览/打开。
 
-**专家页**把专家做成卡片，点一下就带着它开新会话。**Skills 页**列出可用的技能（名字 / 描述 / 触发条件 / 参考文件），下面说明怎么写一个。**自动化**是诚实的待做页——说明会怎么做、以及已经定下的约束，而不是留一个读起来像坏了的空白页。
+**技能页**列出可用的技能（名字 / 描述 / 触发条件 / 参考文件），支持安装/卸载/启停。
+**自动化页**是诚实的待做页——说明会怎么做、以及已经定下的约束，而不是留一个读起来
+像坏了的空白页。**新建任务**开一段新对话，历史会话点一下即恢复。
 
-快捷键：`Ctrl+1..4` 切视图，`Ctrl+N` 新对话，`Ctrl+B` 收侧栏，`Ctrl+I` 切检查器。
-
-深浅两套主题：首次启动跟随系统，手动切换后记住。
+快捷键：`Ctrl+5` 打开设置，`Ctrl+B` 收侧栏。
 
 **一次只跑一个会话。** 切换模式或专家会拆掉旧会话，而不是同时跑两个：配方决定系统提示和工具集，同时跑两个意味着这段对话不再描述同一个 agent。
 
@@ -401,30 +403,30 @@ npm run package
 
 ```
 gdou-agent/
-  electron/
-    main.ts             主进程：窗口 + IPC，内核在这里面跑
+  bridge/
+    server.ts           本地桥（7438）：把 pi 内核包成 JSON-RPC over WebSocket，
+                        前端唯一能对话的地方；会话落盘 + 桥重启自动恢复
+  shell/                Gdouwork 工作台（Vue3 + Vite）：自绘 UI，只跟桥说话
+  electron/             旧 Electron 桌面版（可选）：主进程 + IPC，内核在这里面跑
+    main.ts             主进程：窗口 + IPC
     preload.ts          唯一的桥（contextBridge，编译成 CJS）
-  renderer/
-    index.html          工作台结构：标题栏 / 侧栏 / 主区 / 检查器（刻意零构建）
-    tokens.css          设计令牌：配色、字体、间距、动效，深浅两套
-    shell.css           外壳：标题栏、侧栏、主区网格、页面骨架
-    chat.css            时间线、消息气泡、工具卡片、输入框、弹出菜单
-    panels.css          右侧检查器、专家卡片、待做页、诊断面板
-    app.js              事件驱动的渲染与全部交互
+  renderer/             旧 Electron 桌面版的渲染层（刻意零构建）
   scripts/
+    dev-shell.mjs       一键起「桥 + shell」；桥被占用时直接复用
     vendor-pi.mjs       把 pi 的依赖闭包拷进 vendor/pi，并写 sha256 清单
     check-vendor.mjs    校验 vendor/pi 逐字节未改动
     sync-pi-paths.mjs   从 vendored pi 重新生成 tsconfig.pi-paths.json
     pi-env.mjs          开发态预加载：把 pi 的状态目录钉到本项目
     fetch-tools.mjs     按固定版本抓取 ripgrep / fd 到 vendor/bin
     build.mjs           esbuild 打包：main.cjs / preload.cjs / cli.cjs
-    launch-gui.mjs      启动桌面应用：清掉会阻止 Electron 起步的环境变量再派生
+    launch-gui.mjs      启动旧 Electron 桌面版
     package.mjs         跑 electron-builder，并把二进制下载指向镜像
     shortcut.mjs        把桌面快捷方式指向本项目里的构建
     smoke.ts            内核的离线自测
     tui-check.ts        TUI 的离线自测（假终端 + 脚本化模型）
     tool-check.ts       工具层的离线自测（真跑 grep / find / ls / read）
-    gui-check.mjs       GUI 自测（启动真应用，用 CDP 读回 DOM 断言）
+    gui-check.mjs       旧 GUI 自测（启动真应用，用 CDP 读回 DOM 断言）
+    probe-*.mjs         桥的逐方法探针（真连 7438，带清理还原）
   src/
     cli.ts              无界面 CLI（事件流的参考消费者）
     index.ts            对外 API —— 只从这里 import
@@ -482,7 +484,9 @@ gdou-agent/
 
 ## 架构
 
-三层，每一层都可以在不碰其他两层的前提下替换。
+三层，每一层都可以在不碰其他两层的前提下替换。前端在这三层之外：`shell/` 只通过
+本地桥（`bridge/server.ts`，7438）跟 `AgentSession` 对话，桥是内核的前门，不重复任何
+内核逻辑——会话持久化、模型解析、事件翻译都在桥或内核里，前端只有 UI。
 
 **运行时**（`kernel/runtime.ts`）持有 `Models` 集合。pi-ai 自带 41 家 provider，
 它们已经知道怎么从环境变量读 API key，所以这一层只负责把 `deepseek/deepseek-flash`

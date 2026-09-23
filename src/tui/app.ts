@@ -153,14 +153,14 @@ export class TuiApp {
 		process.once("exit", onProcessExit);
 		this.removeExitHandler = () => process.removeListener("exit", onProcessExit);
 
-		this.terminal.setTitle("GDOU agent");
+		this.terminal.setTitle("Gdouwork");
 		this.tui.start();
 		this.tui.setFocus(this.editor);
 	}
 
 	private pushBanner(): void {
 		const lines = [
-			this.theme.bold("GDOU agent") + this.theme.dim("  built on the pi kernel"),
+			this.theme.bold("Gdouwork") + this.theme.dim("  built on the pi kernel"),
 			"",
 			this.theme.dim(
 				"ctrl+o last tool · ctrl+t all tools · ctrl+l clear · ctrl+c exit · enter send · shift+enter newline",

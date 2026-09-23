@@ -1,0 +1,1214 @@
+﻿:root {
+  --app-bg: #f8f5ef;
+  --surface: #ffffff;
+  --surface-soft: #f5f1ea;
+  --surface-raised: #ffffff;
+  --chrome-bg: #fcf9f7;
+  --border: #fffbf5;
+  --border-strong: #d9d0c3;
+  --text: #332e28;
+  --text-muted: #7d7469;
+  --text-faint: #aaa197;
+  --accent: #24211d;
+  --accent-soft: #eeeae3;
+  --accent-contrast: #ffffff;
+  --danger: #b64a42;
+  --shadow-modal: 0 24px 70px rgb(74 56 38 / 12%), 0 4px 18px rgb(74 56 38 / 7%);
+  --wallpaper-opacity: .28;
+  --wallpaper-opacity-dark: .46;
+  --chrome-surface-opacity: 52%;
+  --conversation-surface-opacity: 64%;
+  --composer-surface-opacity: 92%;
+  --inspector-surface-opacity: 64%;
+}
+
+:root[data-accent="blue"] { --accent: #2d6fbe; --accent-soft: #e0ebf7; }
+:root[data-accent="jade"] { --accent: #26745d; --accent-soft: #deeee8; }
+:root[data-accent="coral"] { --accent: #aa5146; --accent-soft: #f5e3e0; }
+
+:root[data-app-theme="dark"] {
+  color-scheme: dark;
+  --app-bg: #171717;
+  --surface: #171717;
+  --surface-soft: #1e1e1e;
+  --surface-raised: #242424;
+  --chrome-bg: #202020;
+  --border: #2e2e2e;
+  --border-strong: #3d3d3d;
+  --text: #ffffff;
+  --text-muted: #ffffff;
+  --text-faint: #ffffff;
+  --accent: #d7dddf;
+  --accent-soft: #2c2c2c;
+  --accent-contrast: #171717;
+  --danger: #e37a70;
+  --success: #66d496;
+  --success-soft: rgb(55 150 91 / 16%);
+  --shadow-modal: 0 26px 80px rgb(0 0 0 / 48%), 0 5px 20px rgb(0 0 0 / 32%);
+}
+
+:root[data-app-theme="dark"][data-accent="blue"] { --accent: #78aeea; --accent-soft: #263b52; }
+:root[data-app-theme="dark"][data-accent="jade"] { --accent: #72c5a8; --accent-soft: #253f37; }
+:root[data-app-theme="dark"][data-accent="coral"] { --accent: #ee9a90; --accent-soft: #4c302e; }
+
+/* 项目悬浮详情卡片使用了独立的浅色基色，深色主题下需要显式映射到主题表面。 */
+:root[data-app-theme="dark"] .project-preview-card {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+  box-shadow: 0 18px 42px rgb(0 0 0 / 46%), 0 4px 12px rgb(0 0 0 / 30%);
+}
+:root[data-app-theme="dark"] .project-preview-card > header > svg { color: var(--text-muted); }
+:root[data-app-theme="dark"] .project-preview-card > header button { color: var(--text-muted); }
+:root[data-app-theme="dark"] .project-preview-card > header button:hover { color: var(--text); background: var(--surface-soft); }
+:root[data-app-theme="dark"] .project-preview-card__meta,
+:root[data-app-theme="dark"] .project-preview-card__path,
+:root[data-app-theme="dark"] .project-preview-card__edit { border-top-color: var(--border); }
+:root[data-app-theme="dark"] .project-preview-card__meta { color: var(--text-muted); }
+:root[data-app-theme="dark"] .project-preview-card__path { color: var(--text); }
+:root[data-app-theme="dark"] .project-preview-card__edit { color: var(--text-muted); background: var(--surface-soft); }
+:root[data-app-theme="dark"] .project-preview-card__edit:hover { color: var(--text); background: var(--accent-soft); }
+
+/* 全局兜底焦点环：跟随 accent 色，组件未自定义 focus-visible 样式时生效（低特异性，可被覆盖） */
+:where(button, [role="button"], a, input, textarea, select, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+:root[data-app-theme="dark"] .gdou-shell::before {
+  opacity: var(--wallpaper-opacity-dark) !important;
+}
+
+/* 深色模式下所有 AppIcon 图标强制纯白（currentColor 会继承父级颜色，这里统一兜底） */
+:root[data-app-theme="dark"] .app-icon { color: #ffffff; }
+
+.gdou-shell {
+  position: relative;
+  isolation: isolate;
+  color: var(--text) !important;
+  background: var(--app-bg) !important;
+  border-color: var(--border) !important;
+}
+
+/* Without wallpaper, exposed workspace corners must match the adjacent chrome. */
+:root[data-wallpaper="none"] .gdou-shell {
+  background: var(--chrome-bg) !important;
+}
+
+.gdou-shell::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: var(--wallpaper-opacity);
+  pointer-events: none;
+  content: "";
+  transition: opacity 160ms ease;
+}
+
+:root[data-wallpaper="none"] .gdou-shell::before { background: none; }
+
+:root[data-wallpaper="mist"] .gdou-shell::before {
+  background:
+    linear-gradient(128deg, color-mix(in srgb, var(--accent) 68%, transparent), transparent 42%),
+    linear-gradient(310deg, rgb(172 116 88 / 52%), transparent 38%),
+    linear-gradient(35deg, rgb(66 123 118 / 42%), transparent 52%);
+}
+
+:root[data-wallpaper="grid"] .gdou-shell::before {
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--accent) 68%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--accent) 68%, transparent) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+
+:root[data-wallpaper="paper"] .gdou-shell::before {
+  background:
+    repeating-linear-gradient(0deg, transparent 0 3px, color-mix(in srgb, var(--text) 32%, transparent) 3px 4px),
+    linear-gradient(115deg, rgb(166 118 82 / 48%), transparent 55%);
+  background-size: auto, 100% 100%;
+}
+
+:root[data-wallpaper="custom"] .gdou-shell::before {
+  background-image: var(--custom-wallpaper-image);
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: cover;
+}
+
+.gdou-titlebar,
+.sidebar-viewport {
+  color: var(--text) !important;
+  background: var(--chrome-bg) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+}
+
+.gdou-sidebar {
+  color: var(--text) !important;
+  background: var(--chrome-bg) !important;
+  border: 0 !important;
+  box-shadow: none !important;
+}
+
+.gdou-main {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  /* 工作区外围线用中性灰发丝线：主题里的 --border 是暖米色，直接淡化会留下暖色调，
+     这里改用中性灰 + 低透明度控制"淡"的程度；1px 已是最细可辨识宽度，纯透明会失去边界。 */
+  border: 1px solid color-mix(in srgb, #5f6368 12%, transparent) !important;
+  /* 工作区左上角必须只由 --workspace-surface-radius 决定；这里再写死一个半径，
+     会在缺省 .work-active 的场合露出与 chrome 缺口 (24px) 不一致的圆角。 */
+  border-radius: var(--workspace-surface-radius, 24px) 0 0 0;
+}
+
+.settings-link,
+.model-picker-settings { color: var(--text-muted) !important; opacity: 0.7; }
+.settings-link:hover,
+.model-picker-settings:hover:not(:disabled) { color: var(--text) !important; background: var(--surface-soft) !important; opacity: 1; }
+.settings-link:hover svg,
+.model-picker-settings:hover:not(:disabled) svg { transform: rotate(45deg); }
+.sidebar-footer { border: 0 !important; }
+.permission-confirm-backdrop { z-index: 920 !important; }
+.model-manager-backdrop { z-index: 940 !important; }
+
+:root[data-density="compact"] .sidebar-tools button,
+:root[data-density="compact"] .project-task,
+:root[data-density="compact"] .conversation-row { min-height: 31px; }
+:root[data-density="compact"] .task-stream { padding-top: 28px; }
+
+:root[data-app-theme="dark"] :where(
+  .work-header,
+  .task-canvas,
+  .gdou-composer,
+  .queue-dock,
+  .composer-input-shell,
+  .project-popover,
+  .launcher-popover,
+  .simple-page,
+  .session-board article,
+  .permission-confirm,
+  .model-manager-dialog,
+  .model-manager-backdrop > section,
+  .settings-backdrop,
+  .settings-dialog,
+  .settings-dialog__header,
+  .settings-dialog__content,
+  .model-manager,
+  .model-manager-body,
+  .model-list
+) {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+/* 深色模式下让输入区域与页面底色拉开层次，避免编辑框边界融入背景。 */
+:root[data-app-theme="dark"] :is(.gdou-composer, .composer-input-shell) {
+  background: #252525 !important;
+  border-color: #414141 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 5px 18px rgb(0 0 0 / 28%);
+}
+/* 输入壳保持基础样式的 overflow: visible，否则会裁掉落地页内向上弹出的模型/权限菜单 */
+:root[data-app-theme="dark"] :is(.gdou-composer, .composer-input-shell):focus-within {
+  border-color: #5a5a5a !important;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 34%);
+}
+:root[data-app-theme="dark"] :is(.gdou-composer textarea, .composer-input-shell textarea) {
+  color: #f1f1f1 !important;
+  background: transparent !important;
+}
+:root[data-app-theme="dark"] :is(.gdou-composer textarea, .composer-input-shell textarea)::placeholder {
+  color: #a1a1a1 !important;
+}
+/* 深色模式拖拽样式 */
+:root[data-app-theme="dark"] .gdou-composer.drag-over {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 0 0 3px rgb(59 130 246 / 20%) !important;
+}
+:root[data-app-theme="dark"] .gdou-composer.drag-over .composer-input-shell {
+  background: #1e293b !important;
+  border: 2px dashed #3b82f6 !important;
+}
+:root[data-app-theme="dark"] .drag-overlay {
+  background: rgb(30 41 59 / 92%);
+  color: #60a5fa;
+}
+
+:root[data-app-theme="dark"] .model-picker-popover {
+  z-index: 300 !important;
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--border-strong) !important;
+  box-shadow: 0 22px 55px rgb(0 0 0 / 48%), 0 5px 16px rgb(0 0 0 / 32%);
+}
+:root[data-app-theme="dark"] .model-picker-list > button { color: var(--text) !important; }
+:root[data-app-theme="dark"] .model-picker-list > button:hover { background: var(--surface-soft) !important; border-color: var(--border) !important; }
+:root[data-app-theme="dark"] .model-picker-list > button[aria-checked="true"] { background: var(--accent-soft) !important; }
+:root[data-app-theme="dark"] .model-picker-list > button[aria-checked="true"] b,
+:root[data-app-theme="dark"] .model-picker-list b { color: var(--text) !important; }
+:root[data-app-theme="dark"] .model-picker-list small,
+:root[data-app-theme="dark"] .model-picker-popover > header,
+:root[data-app-theme="dark"] .model-picker-error { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] .model-picker-reasoning { background: var(--surface) !important; border-top-color: var(--border) !important; }
+:root[data-app-theme="dark"] .reasoning-slider-rail { background: #3b4148 !important; }
+:root[data-app-theme="dark"] .reasoning-slider-ticks i { background: #737b86 !important; }
+:root[data-app-theme="dark"] .reasoning-slider-input::-webkit-slider-thumb { background: #eef2f5 !important; border-color: #9aa4af !important; box-shadow: 0 1px 4px rgb(0 0 0 / 48%), 0 0 0 2px rgb(255 255 255 / 8%); }
+:root[data-app-theme="dark"] .reasoning-slider-input::-moz-range-thumb { background: #eef2f5 !important; border-color: #9aa4af !important; box-shadow: 0 1px 4px rgb(0 0 0 / 48%), 0 0 0 2px rgb(255 255 255 / 8%); }
+
+
+:root[data-app-theme="dark"] :is(
+  .workspace-trigger,
+  .task-head h1,
+  .task-intro,
+  .markdown-body,
+  .markdown-body h1,
+  .markdown-body h2,
+  .markdown-body h3,
+  .gdou-composer textarea,
+  .service-status b,
+  .simple-page h1,
+  .bridge-card h2,
+  .session-board b,
+  .chat-welcome-heading h1
+) { color: var(--text) !important; }
+
+:root[data-app-theme="dark"] .project-popover small { color: var(--text-muted) !important; }
+
+:root[data-app-theme="dark"] :is(
+  .task-kicker,
+  .service-status small,
+  .side-label,
+  .project-task,
+  .conversation-row,
+  .simple-page p,
+  .bridge-card p,
+  .session-board span
+) { color: var(--text-muted) !important; }
+
+:root[data-app-theme="dark"] :is(
+  .task-search,
+  .run-chip,
+  .timeline-user-message,
+  .outline-button,
+  .bridge-card,
+  select,
+  input:not([type="range"])
+) {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .sidebar-tools button:hover,
+  .sidebar-tools button.active,
+  .project-task:hover,
+  .project-task.active,
+  .conversation-row:hover,
+  .conversation-row.active,
+  .nav-toggle:hover
+) { color: var(--text) !important; background: var(--accent-soft) !important; }
+
+/* 左侧栏功能按钮（全部任务/自动化/技能等 primary-nav 与项目行）：浅色 hover/active 底与深文字的深色修正 */
+:root[data-app-theme="dark"] :is(.primary-nav button, .project-row) { color: var(--text) !important; }
+:root[data-app-theme="dark"] :is(
+  .primary-nav button:hover,
+  .primary-nav button.active,
+  .project-row:hover,
+  .project-row.active
+) { color: var(--text) !important; background: var(--accent-soft) !important; }
+/* 侧栏工具按钮 hover/active 时图标保持纯白（基础样式里 active 图标是 #1f1f1f） */
+:root[data-app-theme="dark"] .sidebar-tools button:is(:hover, .active) .app-icon { color: #ffffff !important; }
+
+:root[data-app-theme="dark"] .nav-toggle {
+  color: var(--text-muted) !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+:root[data-app-theme="dark"] .session-loading {
+  color: var(--text-muted);
+  background: var(--surface);
+}
+
+:root[data-app-theme="dark"] :is(
+  .task-launcher .launcher-heading h1,
+  .task-launcher .launcher-mark
+) {
+  color: var(--text) !important;
+}
+
+:root[data-app-theme="dark"] .work-header__tools :is(.source-control-toggle, .workspace-panel-toggle):is(:hover, :focus-visible, .active) {
+  color: #e5e7eb;
+  background: #3b4047;
+  border: 0;
+  outline: 0;
+  box-shadow: none;
+}
+
+:root[data-app-theme="dark"] .turn-usage { color: #aeb5bf; background: #252a30; }
+:root[data-app-theme="dark"] .turn-usage small { color: #818a96; }
+:root[data-app-theme="dark"] .turn-usage i { background: #3c434b; }
+:root[data-app-theme="dark"] .turn-usage strong { color: #e0e4e8; }
+:root[data-app-theme="dark"] .task-search-popover { color: #e7e9ec; background: #23272d; border-color: #3b424a; }
+:root[data-app-theme="dark"] .task-search-popover__input { color: #b5bdc7; background: #2d333a; border-color: #424a53; }
+:root[data-app-theme="dark"] .task-search-popover__input input { color: #eef1f4; }
+:root[data-app-theme="dark"] .task-search-popover__input kbd { color: #a7b0ba; background: #252a30; border-color: #4a525b; }
+:root[data-app-theme="dark"] .task-search-popover__results button { color: #e2e6ea; }
+:root[data-app-theme="dark"] .task-search-popover__results button:hover,
+:root[data-app-theme="dark"] .task-search-popover__results button:focus-visible { background: #343b43; }
+
+:root[data-app-theme="dark"] .sidebar-session:has(.status-task-row.active),
+:root[data-app-theme="dark"] .sidebar-session:has(.project-task.active),
+:root[data-app-theme="dark"] .sidebar-session:has(.conversation-row.active) {
+  background: var(--accent-soft) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .new-task-button,
+  .sidebar-tools button,
+  .project-row-caret,
+  .project-row-toggle,
+  .status-task-row,
+  .account,
+  .window-actions,
+  .window-action,
+  .work-header__tools button,
+  .icon-button,
+  .composer-project,
+  .model-label,
+  .model-config-trigger
+) { color: var(--text-muted) !important; }
+
+:root[data-app-theme="dark"] .project-row-toggle svg { color: currentColor !important; }
+:root[data-app-theme="dark"] .project-row-caret svg { color: currentColor !important; }
+
+:root[data-app-theme="dark"] :is(
+  .new-task-button,
+  .sidebar-tools button,
+  .project-row-caret,
+  .project-row-shell,
+  .project-row-toggle,
+  .status-task-row,
+  .work-header__tools button,
+  .icon-button
+):hover {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .session-menu,
+  .session-menu input,
+  .project-action-menu,
+  .project-popover,
+  .launcher-popover,
+  .brand-mode-popover,
+  .timeline-user-message__meta,
+  .tool-call-card,
+  .tool-call-card > button,
+  .tool-call-card__details,
+  .thinking-collapse
+) {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .session-menu > button,
+  .session-menu__copy-wrap > button,
+  .session-menu__submenu button,
+  .project-action-menu button,
+  .project-popover button,
+  .launcher-popover button,
+  .brand-mode-popover button
+) { color: var(--text) !important; }
+
+:root[data-app-theme="dark"] :is(
+  .session-menu > button,
+  .session-menu__copy-wrap > button,
+  .session-menu__submenu button,
+  .project-action-menu button,
+  .project-popover button,
+  .launcher-popover button,
+  .brand-mode-popover button
+):hover { background: var(--surface-soft) !important; }
+
+:root[data-app-theme="dark"] .brand-mode-popover small { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] .brand-mode-popover button svg { color: var(--text) !important; }
+:root[data-app-theme="dark"] .brand-mode-trigger:hover { background: var(--surface-raised) !important; }
+:root[data-app-theme="dark"] .brand-mode-trigger svg { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] .brand-mode-trigger[aria-expanded="true"] svg { color: var(--text) !important; }
+
+:root[data-app-theme="dark"] .session-menu__submenu { color: var(--text) !important; background: var(--surface-raised) !important; border-color: var(--border) !important; }
+:root[data-app-theme="dark"] .project-dialog { color: var(--text); background: var(--surface-raised); border-color: var(--border); box-shadow: 0 18px 48px rgb(0 0 0 / 42%); }
+:root[data-app-theme="dark"] .project-dialog h2 { color: var(--text); }
+:root[data-app-theme="dark"] .project-dialog p { color: var(--text); opacity: .88; }
+:root[data-app-theme="dark"] .project-dialog__icon { color: #b4bbc3; background: var(--surface-soft); }
+:root[data-app-theme="dark"] .project-dialog--success .project-dialog__icon { color: #66d496; background: rgb(55 150 91 / 16%); }
+:root[data-app-theme="dark"] .project-dialog--danger .project-dialog__icon { color: #f08a84; background: rgb(190 68 61 / 16%); }
+:root[data-app-theme="dark"] .project-dialog > footer { border-color: var(--border); }
+:root[data-app-theme="dark"] .project-dialog > footer button:not(.primary) { color: var(--text); background: var(--surface-soft); border-color: var(--border); }
+:root[data-app-theme="dark"] .project-edit-dialog { color: var(--text); background: var(--surface-raised); border-color: var(--border); box-shadow: 0 18px 48px rgb(0 0 0 / 42%); }
+:root[data-app-theme="dark"] .project-edit-dialog > header h2 { color: var(--text); }
+:root[data-app-theme="dark"] .project-edit-dialog > header p { color: var(--text); opacity: .82; }
+:root[data-app-theme="dark"] .project-edit-dialog__body label { color: var(--text); }
+:root[data-app-theme="dark"] .project-edit-dialog > header button:hover { color: var(--text); background: var(--surface-soft); }
+:root[data-app-theme="dark"] .project-edit-dialog__body input { color: var(--text); background: var(--surface-soft); border-color: var(--border); }
+:root[data-app-theme="dark"] .project-edit-dialog__body input[readonly] { color: var(--text); background: var(--surface); opacity: .82; }
+:root[data-app-theme="dark"] .project-edit-dialog > footer { background: var(--surface); border-color: var(--border); }
+:root[data-app-theme="dark"] .project-edit-dialog > footer button:not(.primary) { color: var(--text); background: var(--surface-soft); border-color: var(--border); }
+:root[data-app-theme="dark"] .app-menu-item > button { color: var(--text-muted); }
+:root[data-app-theme="dark"] .app-menu-item > button:hover,
+:root[data-app-theme="dark"] .app-menu-item > button[aria-expanded="true"] { color: var(--text); background: rgb(255 255 255 / 9%); }
+:root[data-app-theme="dark"] .app-menu-popover { color: var(--text); background: var(--surface-raised); border-color: var(--border); box-shadow: 0 14px 32px rgb(0 0 0 / 38%); }
+:root[data-app-theme="dark"] .app-menu-popover button:hover,
+:root[data-app-theme="dark"] .app-menu-popover button:focus-visible { background: rgb(255 255 255 / 8%); }
+:root[data-app-theme="dark"] .app-menu-separator { background: var(--border); }
+
+:root[data-app-theme="dark"] :is(
+  .turn-history-toggle,
+  .thinking-panel button,
+  .thinking-panel__icon,
+  .thinking-panel__label,
+  .thinking-panel__preview,
+  .timeline-row__separator,
+  .timeline-row__chevron,
+  .tool-call-group__trigger,
+  .tool-call-group__icon,
+  .tool-call-event > button,
+  .tool-call-event > button > svg:first-child,
+  .tool-call-event__action,
+  .tool-call-event__detail,
+  .turn-call-summary,
+  .session-stats-line,
+  .turn-tail-metrics
+) { color: var(--text-muted) !important; }
+
+:root[data-app-theme="dark"] :is(
+  .thinking-panel__details,
+  .tool-call-event__details pre,
+  .tool-call-card__details pre,
+  .tool-call-card pre
+) {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] .thinking-panel[data-state="running"]::after {
+  background: linear-gradient(90deg, transparent, rgb(255 255 255 / 10%), transparent);
+}
+
+:root[data-app-theme="dark"] .markdown-body code {
+  color: var(--text);
+  background: var(--surface-soft);
+}
+
+:root[data-app-theme="dark"] .markdown-body pre {
+  color: var(--text);
+  background: var(--surface-soft);
+  border-color: var(--border);
+}
+
+:root[data-app-theme="dark"] .markdown-body pre code { background: transparent; }
+
+:root[data-app-theme="dark"] .markdown-body .markdown-table-scroll,
+:root[data-app-theme="dark"] .markdown-body th,
+:root[data-app-theme="dark"] .markdown-body td { border-color: var(--border); }
+
+:root[data-app-theme="dark"] .markdown-body th { background: var(--surface-soft); }
+
+:root[data-app-theme="dark"] .markdown-body blockquote {
+  color: var(--text-muted);
+  border-color: var(--border-strong);
+}
+
+/* Settings is rendered in a portal, so keep its controls tied to the app theme
+   instead of relying on the operating-system color preference. */
+:root[data-app-theme="dark"] :is(
+  .settings-backdrop,
+  .settings-dialog,
+  .settings-dialog__header,
+  .settings-dialog__body,
+  .settings-dialog__nav,
+  .settings-dialog__content,
+  .settings-block,
+  .setting-row,
+  .appearance-split,
+  .custom-wallpaper,
+  .about-details,
+  .model-manager-dialog
+) {
+  color: var(--text) !important;
+}
+
+:root[data-app-theme="dark"] .settings-backdrop { background: rgb(0 0 0 / 68%) !important; }
+:root[data-app-theme="dark"] :is(.settings-dialog, .settings-dialog__header, .settings-dialog__nav, .settings-dialog__content) {
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] :is(.settings-dialog__header h1, .settings-dialog__nav > button, .settings-block__heading h3, .setting-row b, .form-grid label > span, .select-row > span, .about-details dt) { color: var(--text) !important; }
+:root[data-app-theme="dark"] :is(.settings-dialog__header p, .settings-dialog__nav-foot, .settings-block__heading p, .setting-row p, .select-row small, .about-details dd, .settings-dialog__nav-foot small) { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] :is(.settings-dialog__nav > button:hover, .settings-dialog__nav > button.active, .theme-options button:hover, .wallpaper-option:hover, .font-family-options button:hover) { background: var(--accent-soft) !important; color: var(--text) !important; }
+:root[data-app-theme="dark"] :is(.theme-options button, .wallpaper-option, .font-family-options button, .option-btn, .wallpaper-btn, .custom-wallpaper, .form-grid select, .select-row select, .about-details button, .ccswitch-provider) {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] :is(.theme-options button.selected, .wallpaper-option.selected, .font-family-options button.selected, .option-btn.selected, .wallpaper-btn.selected, .custom-wallpaper.selected) {
+  color: var(--text) !important;
+  background: var(--accent-soft) !important;
+  border-color: var(--accent) !important;
+}
+:root[data-app-theme="dark"] :is(.custom-wallpaper__actions button, .about-details button) { color: var(--text) !important; }
+:root[data-app-theme="dark"] .settings-dialog :is(.btn, .btn--primary) { color: var(--accent-contrast) !important; background: var(--accent) !important; border-color: var(--accent) !important; }
+:root[data-app-theme="dark"] .settings-dialog input:not([type="range"]),
+:root[data-app-theme="dark"] .settings-dialog textarea {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] .settings-dialog input::placeholder { color: var(--text-faint) !important; }
+:root[data-app-theme="dark"] .settings-dialog :is(.switch, .stepper) { background: var(--surface-soft) !important; border-color: var(--border) !important; color: var(--text) !important; }
+:root[data-app-theme="dark"] .settings-dialog .switch.enabled { background: var(--accent) !important; }
+:root[data-app-theme="dark"] .settings-dialog .switch span { background: var(--surface-raised) !important; }
+:root[data-app-theme="dark"] .settings-dialog .wallpaper-option__preview { border-color: var(--border) !important; filter: brightness(.8); }
+
+/* Workspace rail and inspector still contain a few legacy light-surface rules. */
+:root[data-app-theme="dark"] :is(.task-canvas, .inspector-panel, .inspector-panel--blank, .file-tree, .change-list, .file-tree-view, .workspace-empty-view, .code-preview) {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+/* 主框架容器暗色适配（.gdou-shell 底色保持 --app-bg，由本文件 56 行与 workbench.css 统一控制） */
+:root[data-app-theme="dark"] :is(.gdou-titlebar, .gdou-sidebar, .gdou-main, .sidebar-viewport, .agent-sidebar) {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+/* 深色模式：左侧任务栏与顶部栏统一 #202020，与主背景 #171717 分层（必须放在主框架规则之后才生效）。
+   注意层级是 .sidebar-viewport(外栏) > .gdou-sidebar(aside) > 各子容器；
+   子容器一律强制透明，否则会在栏体内出现颜色不一致的内嵌色块。 */
+:root[data-app-theme="dark"] :is(.gdou-titlebar, .sidebar-viewport, .gdou-sidebar) {
+  background: var(--chrome-bg) !important;
+}
+:root[data-app-theme="dark"] .gdou-sidebar :is(
+  .sidebar-brand,
+  .sidebar-command,
+  .sidebar-tools,
+  .sidebar-workspace,
+  .side-section,
+  .sidebar-footer
+) {
+  background: transparent !important;
+}
+:root[data-app-theme="dark"] .window-action:hover {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+}
+:root[data-app-theme="dark"] .nav-toggle {
+  color: var(--text-muted) !important;
+}
+:root[data-app-theme="dark"] .nav-toggle:hover {
+  color: var(--text) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] .session-menu,
+:root[data-app-theme="dark"] .slash-menu,
+:root[data-app-theme="dark"] .permission-menu {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--border) !important;
+  box-shadow: 0 16px 38px rgb(0 0 0 / 40%) !important;
+}
+:root[data-app-theme="dark"] .timeline-activity {
+  background: var(--surface-raised) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] .file-preview {
+  background: var(--surface) !important;
+}
+:root[data-app-theme="dark"] :is(.inspector-panel section, .inspector-notice, .inspector-search form, .file-preview--files, .files-body) {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--border) !important;
+}
+:root[data-app-theme="dark"] :is(.file-tree > button, .inspector-panel li, .context-item, .workspace-open-tab > button:first-child, .workspace-tab-close) { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] :is(.file-tree > button:hover, .workspace-open-tab.active, .workspace-open-tab.active:hover, .workspace-tab-close:hover) { color: var(--text) !important; background: var(--accent-soft) !important; }
+:root[data-app-theme="dark"] :is(.inspector-panel h2, .inspector-panel li.done, .context-item b, .preview-breadcrumb, .code-preview-meta) { color: var(--text) !important; }
+:root[data-app-theme="dark"] :is(.inspector-panel li svg, .context-item span, .inspector-empty, .inspector-notice, .workspace-open-tab:not(.active) > button:first-child) { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] .workspace-tab-close { background: var(--surface-raised) !important; }
+
+:root[data-app-theme="dark"] .markdown-body hr {
+  height: 1px;
+  margin: 18px 0;
+  background: var(--border-strong);
+  border: 0;
+}
+
+:root[data-app-theme="dark"] .sidebar-workspace {
+  scrollbar-color: transparent transparent;
+}
+:root[data-app-theme="dark"] .sidebar-workspace:hover {
+  scrollbar-color: rgb(140 150 165 / 28%) transparent;
+}
+:root[data-app-theme="dark"] .sidebar-workspace:hover::-webkit-scrollbar-thumb {
+  background: rgb(140 150 165 / 28%);
+}
+:root[data-app-theme="dark"] .sidebar-workspace::-webkit-scrollbar-thumb:hover {
+  background: rgb(140 150 165 / 50%);
+}
+
+:root[data-app-theme="dark"] .permission-confirm-backdrop {
+  background: rgb(8 11 12 / 72%);
+  backdrop-filter: blur(4px);
+}
+
+:root[data-app-theme="dark"] .permission-confirm > header,
+:root[data-app-theme="dark"] .permission-confirm__body {
+  color: var(--text);
+  background: var(--surface);
+}
+
+:root[data-app-theme="dark"] .permission-confirm > header > span {
+  color: #efb56b;
+  background: #3b3022;
+}
+
+:root[data-app-theme="dark"] .permission-confirm h2,
+:root[data-app-theme="dark"] .permission-confirm__body > b { color: var(--text); }
+
+:root[data-app-theme="dark"] .permission-confirm header p,
+:root[data-app-theme="dark"] .permission-confirm__body ul { color: var(--text-muted); }
+
+:root[data-app-theme="dark"] .permission-confirm__body > p {
+  color: #f0c27a;
+  background: #3f3424;
+  border: 1px solid #5a472c;
+}
+
+:root[data-app-theme="dark"] .permission-confirm > footer {
+  background: var(--surface-soft);
+  border-top: 1px solid var(--border);
+}
+
+:root[data-app-theme="dark"] .permission-confirm > footer button:not(.danger) {
+  color: var(--text);
+  background: var(--surface-raised);
+  border-color: var(--border-strong);
+}
+
+:root[data-app-theme="dark"] .permission-confirm > footer button:not(.danger):hover {
+  background: var(--accent-soft);
+}
+
+:root[data-app-theme="dark"] .permission-confirm > footer button.danger {
+  background: #b94a4f;
+  border-color: #b94a4f;
+}
+
+:root[data-app-theme="dark"] .permission-confirm > footer button.danger:hover {
+  background: #a33e43;
+  border-color: #a33e43;
+}
+
+/* 文件检查器（file-rail）暗色规则统一由 file-rail.css 的 :root[data-app-theme="dark"] 块（696-939 行）维护，此处不再重复定义，避免双份规则取值漂移。 */
+
+/* Capability pages use the shared theme tokens so wallpaper glass stays legible. */
+:root[data-app-theme="dark"] :is(.skill-center, .chat-automations) {
+  color: var(--text) !important;
+  background: var(--surface) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .skill-center__topbar,
+  .skill-search,
+  .automation-form
+) {
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .skill-page-heading h1,
+  .installed-section > h2,
+  .plugin-installed-strip h2,
+  .plugin-catalog > header h2,
+  .capability-copy b,
+  .plugin-empty b,
+  .chat-automations h1,
+  .automation-empty h2
+) {
+  color: var(--text) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .skill-page-heading p,
+  .skill-center__topbar nav button,
+  .skill-center__actions > button,
+  .skill-search,
+  .capability-copy small,
+  .capability-copy > em,
+  .source-tabs button,
+  .automation-form label,
+  .chat-automations header p,
+  .automation-empty,
+  .automation-empty p
+) {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .installed-section > h2,
+  .plugin-installed-strip > header,
+  .plugin-catalog > header,
+  .skill-search
+) {
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .skill-center__topbar nav button:hover,
+  .skill-center__topbar nav button.active,
+  .skill-center__actions > button:hover,
+  .source-tabs button:hover,
+  .source-tabs button.active,
+  .catalog-section .capability-row:hover,
+  .skill-state:hover
+) {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+}
+
+/* Wallpaper remains a single continuous layer; large work surfaces reveal it softly. */
+:root:not([data-wallpaper="none"]) .gdou-shell.is-macos::before {
+  content: "";
+}
+
+:root:not([data-wallpaper="none"]) :is(.gdou-titlebar, .sidebar-viewport) {
+  background: transparent !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* Chrome must not sit under translucent content surfaces. Use the same round
+   corner for the workspace and the complementary chrome cutout.
+   纯色材质也走同一套变量：否则 .gdou-main 会落到 workbench 的 squircle 圆角，
+   与壁纸材质下的圆形缺口弧线对不上，左上角在两种材质间就不是同一个圆角。 */
+.gdou-shell {
+  --chrome-cutout-left: var(--sidebar-width, 268px);
+  --chrome-cutout-radius: 24px;
+}
+.gdou-shell.sidebar-collapsed {
+  --chrome-cutout-left: 0px;
+  --chrome-cutout-radius: 0px;
+}
+.gdou-main {
+  --workspace-surface-radius: var(--chrome-cutout-radius, 24px);
+  corner-shape: round;
+}
+:root:not([data-wallpaper="none"]) .gdou-shell::before { z-index: -2; }
+:root:not([data-wallpaper="none"]) .gdou-shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  clip-path: shape(from 0px 0px,
+    line to 100% 0px, line to 100% 52px,
+    line to calc(var(--chrome-cutout-left) + var(--chrome-cutout-radius)) 52px,
+    arc to var(--chrome-cutout-left) calc(52px + var(--chrome-cutout-radius)) of var(--chrome-cutout-radius) ccw,
+    line to var(--chrome-cutout-left) 100%, line to 0px 100%, close);
+  background: color-mix(in srgb, var(--chrome-bg) var(--chrome-surface-opacity), transparent) !important;
+  backdrop-filter: blur(16px) saturate(112%);
+  -webkit-backdrop-filter: blur(16px) saturate(112%);
+}
+
+:root:not([data-wallpaper="none"]) .gdou-sidebar {
+  background: transparent !important;
+}
+
+:root:not([data-wallpaper="none"]) .gdou-main {
+  background: color-mix(in srgb, var(--surface) var(--conversation-surface-opacity), transparent) !important;
+}
+
+/* 工作页存在时整窗让位于壁纸，会话表面由 task-canvas 承担；
+   落地页（无工作页）仍由 gdou-main 提供会话区表面，透明度滑块可直接作用于它。 */
+:root:not([data-wallpaper="none"]) .gdou-main:has(.work-page) {
+  background: transparent !important;
+}
+
+:root:not([data-wallpaper="none"]) .gdou-main:has(.skill-center),
+:root:not([data-wallpaper="none"]) .gdou-main:has(.chat-automations),
+:root:not([data-wallpaper="none"]) :is(.skill-center, .chat-automations) {
+  background: transparent !important;
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .skill-search,
+  .automation-form
+) {
+  background: color-mix(in srgb, var(--surface) 78%, transparent) !important;
+  border-color: color-mix(in srgb, var(--border) 78%, transparent) !important;
+  backdrop-filter: blur(12px) saturate(108%);
+  -webkit-backdrop-filter: blur(12px) saturate(108%);
+}
+
+:root:not([data-wallpaper="none"]) .skill-center__topbar {
+  background: color-mix(in srgb, var(--surface) 28%, transparent) !important;
+  border-color: color-mix(in srgb, var(--border) 58%, transparent) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+:root:not([data-wallpaper="none"]) :is(.automation-form input, .automation-form select) {
+  background: color-mix(in srgb, var(--surface) 88%, transparent) !important;
+  border-color: color-mix(in srgb, var(--border) 82%, transparent) !important;
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .skill-center__topbar nav button:hover,
+  .skill-center__topbar nav button.active,
+  .skill-center__actions > button:hover,
+  .source-tabs button:hover,
+  .source-tabs button.active,
+  .catalog-section .capability-row:hover,
+  .skill-state:hover
+) {
+  background: color-mix(in srgb, var(--surface-raised) 70%, transparent) !important;
+}
+
+:root:not([data-wallpaper="none"]) .task-canvas {
+  background: color-mix(in srgb, var(--surface) var(--conversation-surface-opacity), transparent) !important;
+}
+
+:root:not([data-wallpaper="none"]) .project-inspector.file-rail {
+  background: color-mix(in srgb, var(--surface) var(--inspector-surface-opacity), transparent) !important;
+}
+
+:root:not([data-wallpaper="none"]) .sandbox-workspace {
+  background: color-mix(in srgb, var(--surface) var(--inspector-surface-opacity), transparent) !important;
+  backdrop-filter: blur(12px) saturate(108%);
+  -webkit-backdrop-filter: blur(12px) saturate(108%);
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .task-conversation > .queue-dock > .gdou-composer,
+  .task-conversation > .queue-dock > .user-question-composer,
+  .task-launcher .composer-input-shell,
+  .task-launcher .landing-composer,
+  .chat-composer > textarea
+) {
+  background: color-mix(in srgb, var(--surface) var(--composer-surface-opacity), transparent) !important;
+  backdrop-filter: blur(12px) saturate(108%);
+  -webkit-backdrop-filter: blur(12px) saturate(108%);
+}
+
+/* Only the visible card owns the fill, including in dark mode. */
+.task-launcher .launcher-bottom-controls {
+  margin-top: 0;
+  padding-top: 6px;
+  padding-bottom: 4px;
+  background: #f5f5f5;
+  border-radius: 0 0 25px 25px;
+}
+:root[data-app-theme="dark"] .task-launcher .launcher-bottom-controls {
+  background: #252525;
+}
+
+:root:not([data-wallpaper="none"]) .task-conversation .gdou-composer:not(.drag-over) .composer-input-shell,
+:root:not([data-wallpaper="none"]) .task-launcher .gdou-composer:not(.drag-over):not(.landing-composer) {
+  background: transparent !important;
+  box-shadow: none;
+}
+
+/* 首页输入卡片的底部控制栏必须与输入壳共用同一层材质，避免壁纸模式下两侧出现缺口。 */
+:root:not([data-wallpaper="none"]) .task-launcher .launcher-bottom-controls {
+  margin-inline: -1px;
+  padding-inline: 8px;
+  background: transparent !important;
+  border-radius: 0 0 25px 25px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .work-header, .workspace-tab-strip, .workspace-home-header
+) {
+  background: transparent !important;
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .task-summary-view,
+  .summary-section,
+  .files-workspace,
+  .file-tree-view,
+  .file-tree-view .file-preview--files,
+  .file-tree-view .files-body,
+  .files-preview-placeholder,
+  .workspace-empty-view,
+  .home-workspace,
+  .browser-workspace,
+  .browser-stage
+) {
+  background: transparent !important;
+}
+
+/* 壁纸模式下首页按钮使用半透明hover效果 */
+:root:not([data-wallpaper="none"]) .home-launcher__button:hover {
+  background: color-mix(in srgb, var(--surface-raised) 70%, transparent) !important;
+}
+:root:not([data-wallpaper="none"]) .home-launcher__button:focus-visible {
+  background: color-mix(in srgb, var(--surface-raised) 85%, transparent) !important;
+}
+
+/* 壁纸模式下文件标签栏透明 */
+:root:not([data-wallpaper="none"]) .file-tabs-bar {
+  background: transparent !important;
+  border-bottom-color: color-mix(in srgb, var(--border) 60%, transparent) !important;
+}
+
+/* 壁纸模式下浏览器工具栏和地址栏半透明 */
+:root:not([data-wallpaper="none"]) .browser-toolbar {
+  background: color-mix(in srgb, var(--surface) 80%, transparent) !important;
+  border-bottom-color: color-mix(in srgb, var(--border) 60%, transparent) !important;
+  backdrop-filter: blur(12px) saturate(108%);
+  -webkit-backdrop-filter: blur(12px) saturate(108%);
+}
+:root:not([data-wallpaper="none"]) .browser-address {
+  background: color-mix(in srgb, var(--surface-raised) 85%, transparent) !important;
+  border-color: color-mix(in srgb, var(--border) 70%, transparent) !important;
+}
+
+/* 壁纸模式下功能区标签激活态半透明 */
+:root:not([data-wallpaper="none"]) .workspace-open-tab.active {
+  background: color-mix(in srgb, var(--surface-raised) 75%, transparent) !important;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 8%) !important;
+}
+:root:not([data-wallpaper="none"]) .workspace-open-tab.active .workspace-tab-close {
+  background: color-mix(in srgb, var(--surface-raised) 90%, transparent) !important;
+}
+
+/* 深色模式：会话区背景跟随主背景 #171717（覆盖默认 --surface 与壁纸模式半透明两种形态） */
+:root[data-app-theme="dark"] :is(.gdou-main, .task-canvas) {
+  background: var(--app-bg) !important;
+}
+:root[data-app-theme="dark"]:not([data-wallpaper="none"]) :is(.gdou-main, .task-canvas) {
+  background: color-mix(in srgb, #171717 var(--conversation-surface-opacity), transparent) !important;
+}
+:root[data-app-theme="dark"]:not([data-wallpaper="none"]) .gdou-main:has(.skill-center),
+:root[data-app-theme="dark"]:not([data-wallpaper="none"]) .gdou-main:has(.chat-automations) {
+  background: transparent !important;
+}
+
+/* 壁纸模式下文件标签hover和激活态半透明 */
+:root:not([data-wallpaper="none"]) .file-tab:hover {
+  background: color-mix(in srgb, var(--surface-raised) 60%, transparent) !important;
+}
+:root:not([data-wallpaper="none"]) .file-tab.active {
+  background: color-mix(in srgb, var(--surface-raised) 75%, transparent) !important;
+}
+:root:not([data-wallpaper="none"]) .file-tab-close:hover {
+  background: color-mix(in srgb, var(--surface-raised) 90%, transparent) !important;
+}
+
+/* 壁纸模式下浏览器按钮hover半透明 */
+:root:not([data-wallpaper="none"]) .browser-toolbar-action:hover:not(:disabled),
+:root:not([data-wallpaper="none"]) .browser-toolbar-menu:hover,
+:root:not([data-wallpaper="none"]) .browser-toolbar-submit:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--surface-raised) 70%, transparent) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .project-profile-meta,
+  .project-profile-overview,
+  .project-profile-component,
+  .project-technology-grid > section,
+  .project-validation-command,
+  .project-evidence li,
+  .project-validation-empty
+) {
+  color: var(--text-muted) !important;
+  background: var(--surface-soft) !important;
+  border-color: var(--border) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .project-profile-toolbar p b,
+  .project-profile-overview strong,
+  .project-profile-component > header b,
+  .project-profile-subheading b,
+  .project-validation-group > header b,
+  .project-validation-command code,
+  .project-evidence summary,
+  .project-evidence code
+) {
+  color: var(--text) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .project-profile-toolbar p small,
+  .project-profile-meta,
+  .project-profile-meta code,
+  .project-profile-overview small,
+  .project-profile-component > header small,
+  .project-profile-subheading small,
+  .project-validation-command p,
+  .project-validation-command span,
+  .project-validation-command small,
+  .project-evidence li > span,
+  .project-evidence li > small,
+  .project-recommendation-note
+) {
+  color: var(--text-muted) !important;
+}
+
+:root[data-app-theme="dark"] :is(.project-profile-component__icon, .project-technology-list > span) {
+  color: var(--text) !important;
+  background: var(--surface-raised) !important;
+}
+
+:root[data-app-theme="dark"] :is(
+  .project-profile-overview > span + span,
+  .project-profile-component > header,
+  .project-validation-group + .project-validation-group
+) {
+  border-color: var(--border) !important;
+}
+
+:root:not([data-wallpaper="none"]) .file-tree-view .code-preview {
+  background: color-mix(in srgb, var(--surface) var(--inspector-surface-opacity), transparent) !important;
+  backdrop-filter: blur(10px) saturate(106%);
+  -webkit-backdrop-filter: blur(10px) saturate(106%);
+}
+
+:root:not([data-wallpaper="none"]) :is(
+  .file-tree-view .code-preview-scroll,
+  .file-tree-view .code-preview-meta,
+  .file-tree-view .preview-breadcrumb
+) {
+  background: transparent !important;
+}
+
+:root[data-wallpaper="mist"] .gdou-shell::after {
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, #fffaf2 var(--chrome-surface-opacity), transparent) 0%,
+      color-mix(in srgb, #f7e6d5 var(--chrome-surface-opacity), transparent) 18%,
+      color-mix(in srgb, #dbd2ef var(--chrome-surface-opacity), transparent) 40%,
+      color-mix(in srgb, #ebe5dd var(--chrome-surface-opacity), transparent) 62%,
+      color-mix(in srgb, #ebdae9 var(--chrome-surface-opacity), transparent) 80%,
+      color-mix(in srgb, #fff7ee var(--chrome-surface-opacity), transparent) 100%
+    ) !important;
+  background-size: 180% 180% !important;
+  background-attachment: fixed !important;
+  animation: mist-chrome-flow 18s ease-in-out infinite;
+}
+
+:root[data-app-theme="dark"][data-wallpaper="mist"] .gdou-shell::after {
+  background:
+    linear-gradient(
+      118deg,
+      color-mix(in srgb, #342d29 var(--chrome-surface-opacity), transparent) 0%,
+      color-mix(in srgb, #3d3029 var(--chrome-surface-opacity), transparent) 18%,
+      color-mix(in srgb, #433754 var(--chrome-surface-opacity), transparent) 40%,
+      color-mix(in srgb, #2b2a28 var(--chrome-surface-opacity), transparent) 62%,
+      color-mix(in srgb, #413141 var(--chrome-surface-opacity), transparent) 80%,
+      color-mix(in srgb, #2f2b28 var(--chrome-surface-opacity), transparent) 100%
+    ) !important;
+}
+
+@keyframes mist-chrome-flow {
+  0%, 100% { background-position: 0% 48%; }
+  50% { background-position: 100% 52%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root[data-wallpaper="mist"] .gdou-shell::after {
+    animation: none;
+    background-position: 50% 50%;
+  }
+}
+
+/* Chrome and capability tabs share a tinted interaction layer instead of flat gray. */
+:root {
+  --control-tint: #b47758;
+  --control-hover: color-mix(in srgb, var(--control-tint) 11%, transparent);
+  --control-selected: color-mix(in srgb, var(--control-tint) 19%, transparent);
+  --control-pressed: color-mix(in srgb, var(--control-tint) 25%, transparent);
+  --control-ring: color-mix(in srgb, var(--control-tint) 28%, transparent);
+}
+:root[data-app-theme="dark"] { --control-tint: #dfb396; }
+:root:is([data-accent="blue"], [data-accent="jade"], [data-accent="coral"]) {
+  --control-tint: var(--accent);
+}
+
+:root .gdou-shell :is(
+  .nav-toggle,
+  .app-menu-item > button,
+  .window-action:not(.window-action--close),
+  .work-header__tools button,
+  .workspace-trigger,
+  .skill-center__topbar nav button,
+  .skill-center__actions > button,
+  .source-tabs button
+):not(:disabled):hover {
+  color: var(--text) !important;
+  background: var(--control-hover) !important;
+}
+
+:root .gdou-shell :is(
+  .app-menu-item > button[aria-expanded="true"],
+  .work-header__tools button.active,
+  .work-header__tools button[aria-expanded="true"],
+  .skill-center__topbar nav button.active,
+  .source-tabs button.active
+):not(:disabled) {
+  color: var(--text) !important;
+  background: var(--control-selected) !important;
+  box-shadow: inset 0 0 0 1px var(--control-ring);
+}
+
+/* The two top-level Skills tabs use a filled pill without an inset outline. */
+:root .gdou-shell .skill-center__topbar nav button.active {
+  box-shadow: none;
+}
+
+/* Match the plugin filter tabs to the same warm active surface. */
+:root .gdou-shell .plugin-tabs button.active {
+  color: var(--text) !important;
+  background: var(--control-selected) !important;
+  box-shadow: none;
+}
+
+:root .gdou-shell :is(
+  .nav-toggle,
+  .app-menu-item > button,
+  .window-action:not(.window-action--close),
+  .work-header__tools button,
+  .workspace-trigger,
+  .skill-center__topbar nav button,
+  .skill-center__actions > button,
+  .source-tabs button
+):not(:disabled):active {
+  background: var(--control-pressed) !important;
+}
+
+/* Keep the close control on the same interaction colors as its neighboring controls. */
+:root .gdou-shell .window-action--close:hover {
+  color: var(--text) !important;
+  background: var(--control-hover) !important;
+}
+:root .gdou-shell .window-action--close:active {
+  color: var(--text) !important;
+  background: var(--control-pressed) !important;
+}

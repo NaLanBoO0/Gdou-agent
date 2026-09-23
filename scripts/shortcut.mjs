@@ -34,7 +34,7 @@ import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const TARGET = join(ROOT, "release", "win-unpacked", "GDOU-agent.exe");
-const SHORTCUT_NAME = "GDOU agent.lnk";
+const SHORTCUT_NAME = "Gdouwork.lnk";
 
 /** The desktop can be redirected to OneDrive, so ask the shell where it is. */
 function desktopDir() {
@@ -125,7 +125,7 @@ function buildLink(target, workingDir) {
 	// Order is fixed by the format: NAME, RELATIVE_PATH, WORKING_DIR,
 	// COMMAND_LINE_ARGUMENTS, ICON_LOCATION.
 	const strings = Buffer.concat([
-		stringData("GDOU agent - built from this project folder", unicode),
+		stringData("Gdouwork - built from this project folder", unicode),
 		stringData(workingDir, unicode),
 		stringData(target, unicode),
 	]);

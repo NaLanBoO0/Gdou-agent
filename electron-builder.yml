@@ -5,7 +5,7 @@
 # installer carries the bundle plus Electron itself and nothing else.
 
 appId: com.gdou.agent
-productName: GDOU agent
+productName: Gdouwork
 executableName: GDOU-agent
 
 directories:
@@ -45,4 +45,4 @@ nsis:
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true
-  shortcutName: GDOU agent
+  shortcutName: Gdouwork

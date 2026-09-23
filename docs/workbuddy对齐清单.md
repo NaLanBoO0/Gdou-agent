@@ -333,10 +333,10 @@ kamibuddy 的判定链设计里有几条**推理**比代码更值钱，直接可
 
 | 编号 | 能力 | WorkBuddy 机制（内部实现） | 我们 | 状态 |
 | --- | --- | --- | --- | --- |
-| I1 | 传输 | stdio / SSE / HTTP 三种 | 无 | ❌ |
-| I2 | 作用域 | user / project / local 三级，优先级 local>project>user；JSONC 允许注释 | 无 | ❌ |
-| I3 | 环境变量扩展 | 配置内 `${VAR}` / `${VAR:-default}` | 无 | ❌ |
-| I4 | 安全审批 | 项目级 server 首次连接需用户批准 | 无 | ❌ |
+| I1 | 传输 | stdio / SSE / HTTP 三种 | stdio（`@modelcontextprotocol/sdk`） | 🟡 stdio 已做，SSE/HTTP 未做 |
+| I2 | 作用域 | user / project / local 三级，优先级 local>project>user；JSONC 允许注释 | 同三级（`~/.gdou-agent/mcp.json` / `<cwd>/.gdou-agent/mcp.json` / `<cwd>/.mcp.json`），JSONC 手写剥离 | ✅ |
+| I3 | 环境变量扩展 | 配置内 `${VAR}` / `${VAR:-default}` | 同，env 与 command 都展开 | ✅ |
+| I4 | 安全审批 | 项目级 server 首次连接需用户批准 | 无（依赖权限门，MCP 工具走 `beforeToolCall` 同一条门） | ❌ |
 | I5 | MCP Apps | widget 沙箱 iframe 渲染工具结果 | 无 | ❌ |
 | I6 | 连接器代理 | `mcp__connector-proxy__*` | 无 | ❌ |
 | I7 | 内置 MCP | agently-cli / ardot-mcp-app / miora-mcp | 无 | ❌ |
@@ -389,7 +389,7 @@ kamibuddy 有一条判断值得记：**记忆的更新靠提示词纪律，不�
 
 ## L. 界面与交互
 
-我们的外壳已经是 SztuCode 那一套：无边框窗口 + 自绘标题栏 + 侧栏（模式切换 /
+我们的外壳已经是自绘的那一套：无边框窗口 + 自绘标题栏 + 侧栏（模式切换 /
 对话·专家·自动化·Skills / 对话记录）+ 主区（时间线 + 可拖拽检查器 + 输入框）。
 
 | 编号 | 能力 | WorkBuddy 机制（内部实现） | 我们 | 状态 |

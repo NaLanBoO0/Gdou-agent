@@ -571,6 +571,37 @@
 	word-break: break-all;
 }
 
+/* Header row of the inspector's artifact preview: the name plus an affordance
+   to open the file in its default app. */
+.artifact-preview-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.artifact-preview-head b {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.artifact-preview-open {
+	flex: 0 0 auto;
+	padding: 4px 10px;
+	color: var(--text);
+	background: var(--surface-raised);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+	font-size: var(--text-sm);
+	white-space: nowrap;
+}
+
+.artifact-preview-open:hover {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
 /* The tool block still shows its own one-line summary, which is redundant once
    the cards are there. */
 .tool--delivery .tool-body {

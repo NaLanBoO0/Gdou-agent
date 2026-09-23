@@ -42,13 +42,13 @@ import {
 	resolveAsk,
 } from "../src/kernel/permission.ts";
 import { composePrompt, narrowTools } from "../src/kernel/recipe.ts";
-import { ModelRuntime, parseModelSpec } from "../src/kernel/runtime.ts";
-import { notesPath } from "../src/paths.ts";
+import { ModelRuntime, parseModelSpec, testModel } from "../src/kernel/runtime.ts";
+import { notesPath, PROJECT_ROOT } from "../src/paths.ts";
 import { BUILTIN_MODES } from "../src/profiles/builtin.ts";
 import { withEnvironment } from "../src/profiles/loader.ts";
 import { getProfile, loadProfiles, registerProfile, requireProfile } from "../src/profiles/registry.ts";
 import { resolveTool, TOOL_FACTORIES } from "../src/profiles/tool-catalog.ts";
-import { getSkill, listSkills, loadSkills, readSkillReference } from "../src/skills/registry.ts";
+import { getSkill, installSkill, listSkills, loadSkills, readSkillReference, uninstallSkill } from "../src/skills/registry.ts";
 import { currentTimeTool } from "../src/tools/time.ts";
 import { listNotesTool, saveNoteTool } from "../src/tools/notes.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange, targetExists } from "../src/kernel/changes.ts";
@@ -413,6 +413,45 @@ async function checkSkills(): Promise<void> {
 		check("an unknown reference names the available ones", unknownRef.includes("glossary.md"), unknownRef.slice(0, 80));
 	} finally {
 		rmSync(sandbox, { recursive: true, force: true });
+	}
+
+	// ---- install / uninstall / disabled, workspace-scoped ------------
+	// A second sandbox: installing and removing real directories is the point,
+	// and doing it against the developer's actual skill folders would be editing
+	// real state. The workspace scope keeps everything under the sandbox cwd.
+	const installSandbox = mkdtempSync(join(tmpdir(), "gdou-skill-install-"));
+	try {
+		const sourceDir = join(installSandbox, "source-skill");
+		mkdirSync(join(sourceDir, "references"), { recursive: true });
+		writeFileSync(join(sourceDir, "SKILL.md"), "---\nname: 安装测试\ndescription: 测试安装\n---\n\n安装正文。\n", "utf-8");
+		writeFileSync(join(sourceDir, "references", "notes.md"), "# 笔记\n", "utf-8");
+
+		const installed = installSkill(sourceDir, "workspace", installSandbox);
+		check("install returns the parsed skill", installed.id === "source-skill" && installed.references.length === 1);
+		const afterInstall = loadSkills(installSandbox);
+		check("the installed skill joins the catalog", afterInstall.skills.some((s) => s.id === "source-skill"));
+
+		// Installing over an existing id is refused, not silently overwritten.
+		let overwriteError = "";
+		try { installSkill(sourceDir, "workspace", installSandbox); } catch (error) { overwriteError = (error as Error).message; }
+		check("installing an existing id is refused", overwriteError.includes("已存在"), overwriteError.slice(0, 60));
+
+		// A disabled skill disappears from the catalog but stays unloadable by id.
+		const disabled = loadSkills(installSandbox, new Set(["git-commit"]));
+		check("a disabled built-in is hidden from the catalog", !disabled.skills.some((s) => s.id === "git-commit"));
+		check("other skills survive the filter", disabled.skills.some((s) => s.id === "source-skill"));
+
+		// Uninstalling a built-in is refused; uninstalling an installed one works.
+		let builtinError = "";
+		try { uninstallSkill("git-commit", installSandbox); } catch (error) { builtinError = (error as Error).message; }
+		check("a built-in skill cannot be uninstalled", builtinError.includes("内置"), builtinError.slice(0, 60));
+
+		uninstallSkill("source-skill", installSandbox);
+		check("uninstall removes the skill directory", !existsSync(join(installSandbox, ".gdou-agent", "skills", "source-skill")));
+		const afterUninstall = loadSkills(installSandbox);
+		check("the uninstalled skill leaves the catalog", !afterUninstall.skills.some((s) => s.id === "source-skill"));
+	} finally {
+		rmSync(installSandbox, { recursive: true, force: true });
 	}
 
 	// ---- assembly -------------------------------------------------------
@@ -1675,6 +1714,88 @@ async function checkDelegate(): Promise<void> {
 	generalSession.dispose();
 }
 
+async function checkMcp(): Promise<void> {
+	console.log("\nMCP");
+
+	// The server script speaks the MCP stdio protocol without the SDK's server
+	// half, so the client half is proven against a bare JSON-RPC peer.
+	const serverScript = join(PROJECT_ROOT, "scripts", "smoke-mcp-server.mjs");
+
+	// 1. Config loading: JSONC comments, `${VAR}` expansion, and scope merge.
+	const { loadMcpConfig, expandEnv } = await import("../src/mcp/config.ts");
+	check("env expansion replaces a set variable", expandEnv("x-${FOO}-y", { FOO: "bar" }) === "x-bar-y");
+	check("env expansion falls back to a default", expandEnv("${MISSING:-fallback}") === "fallback");
+	check("env expansion yields empty without a default", expandEnv("${MISSING}") === "");
+
+	const configDir = mkdtempSync(join(tmpdir(), "gdou-mcp-"));
+	writeFileSync(
+		join(configDir, ".mcp.json"),
+		JSON.stringify({
+			// a comment would not survive JSON.stringify; JSONC handling is covered
+			// below via the raw string.
+			smoke: { command: process.execPath, args: [serverScript], env: { GREETING: "${GREETING_VAR}" } },
+		}),
+	);
+	const loaded = loadMcpConfig(configDir);
+	check("a project .mcp.json is loaded", loaded.smoke?.command === process.execPath, JSON.stringify(loaded));
+
+	// JSONC comments and trailing commas are stripped, not fatal.
+	const jsoncDir = mkdtempSync(join(tmpdir(), "gdou-mcp-jsonc-"));
+	writeFileSync(
+		join(jsoncDir, ".mcp.json"),
+		'{\n  // a comment\n  "smoke": { "command": "node", "args": ["x"], },\n}\n',
+	);
+	const jsoncLoaded = loadMcpConfig(jsoncDir);
+	check("JSONC comments and trailing commas are accepted", jsoncLoaded.smoke?.command === "node", JSON.stringify(jsoncLoaded));
+
+	// 2. Client: connect, list tools, call one.
+	const { createMcpClient } = await import("../src/mcp/client.ts");
+	const client = createMcpClient("smoke", { command: process.execPath, args: [serverScript] });
+	await client.connect();
+	const tools = client.tools();
+	check("the server's tools are listed", tools.length === 2, tools.map((t) => t.name).join(","));
+	check("the echo tool keeps its description", tools.find((t) => t.name === "echo")?.description?.includes("unchanged") === true);
+	const echoed = await client.call("echo", { text: "hello mcp" });
+	check("a tool call round-trips", echoed === "hello mcp", echoed);
+	const added = await client.call("add", { a: 2, b: 3 });
+	check("typed arguments are passed through", added === "5", added);
+	await client.close();
+
+	// 3. Schema conversion and tool mounting.
+	const { jsonSchemaToTypeBox } = await import("../src/mcp/schema.ts");
+	const echoTool = tools.find((t) => t.name === "echo");
+	if (echoTool) {
+		const schema = jsonSchemaToTypeBox(echoTool.inputSchema);
+		check("an object schema maps to TypeBox Object", schema !== undefined);
+	}
+
+	// 4. Mounted on a session: a session built in a dir with a configured server
+	//    carries `mcp__<server>__<tool>` tools.
+	const mcpCwd = mkdtempSync(join(tmpdir(), "gdou-mcp-session-"));
+	writeFileSync(
+		join(mcpCwd, ".mcp.json"),
+		JSON.stringify({ smoke: { command: process.execPath, args: [serverScript] } }),
+	);
+	const session = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: mcpCwd });
+	const sessionNames = session.tools.map((tool) => tool.name);
+	check("MCP tools mount with a server prefix", sessionNames.some((n) => n.startsWith("mcp__smoke__")), sessionNames.filter((n) => n.startsWith("mcp__")).join(","));
+	check("the mounted tool is callable", (await session.tools.find((t) => t.name === "mcp__smoke__echo")?.execute("x", { text: "mounted" }))?.content[0]?.type === "text");
+	session.dispose();
+
+	// 5. A broken server is reported, not fatal.
+	const badDir = mkdtempSync(join(tmpdir(), "gdou-mcp-bad-"));
+	writeFileSync(join(badDir, ".mcp.json"), JSON.stringify({ bad: { command: "definitely-not-a-real-command-xyz" } }));
+	const badSession = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: badDir });
+	check("a broken server is reported in mcpErrors", Object.keys(badSession.mcpErrors).includes("bad"), JSON.stringify(badSession.mcpErrors));
+	check("a broken server does not abort the session", badSession.tools.length > 0);
+	badSession.dispose();
+
+	rmSync(configDir, { recursive: true, force: true });
+	rmSync(jsoncDir, { recursive: true, force: true });
+	rmSync(mcpCwd, { recursive: true, force: true });
+	rmSync(badDir, { recursive: true, force: true });
+}
+
 async function main(): Promise<void> {
 	console.log("Module resolution");
 	check("pi-ai import resolves", typeof createModels === "function");
@@ -1904,10 +2025,19 @@ async function main(): Promise<void> {
 	await checkModelFallback();
 	await checkObservability();
 	await checkDelegate();
+	await checkMcp();
 
 	console.log("\nSettings and credentials");
 	const settings = loadSettings();
 	check("settings load", typeof settings === "object");
+	// `testModel` on an unknown spec fails before touching any credential or the
+	// network — the deterministic half of the connection test.
+	const unknownModelTest = await testModel("no-such-provider/no-such-model");
+	check(
+		"testModel names an unknown model",
+		!unknownModelTest.success && (unknownModelTest.error ?? "").includes("未知模型"),
+		unknownModelTest.error,
+	);
 	const configured = presetsWithCredentials();
 	console.log(`  ${configured.length} provider key(s) present in the environment`);
 	if (configured.length > 0) {

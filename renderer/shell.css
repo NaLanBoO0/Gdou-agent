@@ -1,7 +1,7 @@
 /**
  * Application shell: titlebar, sidebar, main column.
  *
- * The grid is `52px / 240px` because that is SztuCode's shell, and the two
+ * The grid is `52px / 240px` because that is the shell's, and the two
  * apps are meant to read as the same product. The titlebar spans both columns
  * and the sidebar can collapse to zero width without the main column moving.
  *
@@ -10,7 +10,7 @@
  * to opt out of dragging or it becomes unclickable.
  */
 
-.sztu-shell {
+.gdou-shell {
 	display: grid;
 	grid-template: var(--titlebar-h) minmax(0, 1fr) / var(--sidebar-w, 240px) minmax(0, 1fr);
 	height: 100%;
@@ -20,7 +20,7 @@
 	border: 1px solid var(--border);
 }
 
-.sztu-shell.sidebar-collapsed {
+.gdou-shell.sidebar-collapsed {
 	grid-template-columns: 0 minmax(0, 1fr);
 }
 
@@ -62,12 +62,12 @@
 
 /* Animated only while the user is toggling. Leaving the transition on would
    also animate window resizes, where it reads as lag. */
-.sztu-shell.sidebar-animating {
+.gdou-shell.sidebar-animating {
 	transition: grid-template-columns var(--speed) ease;
 }
 
-.sztu-shell.window-resizing,
-.sztu-shell.window-resizing .sidebar {
+.gdou-shell.window-resizing,
+.gdou-shell.window-resizing .sidebar {
 	transition: none !important;
 }
 
@@ -265,7 +265,7 @@
 	background: var(--surface);
 }
 
-/* The brand row SztuCode's sidebar leads with. Kept out of the drag region and
+/* The brand row the shell's sidebar leads with. Kept out of the drag region and
    small enough that it reads as chrome, not a heading competing with the nav. */
 .sidebar-brand {
 	display: flex;
@@ -304,7 +304,7 @@
 	font-size: var(--text-xs);
 }
 
-/* The one always-visible call to action. SztuCode leads the sidebar with it,
+/* The one always-visible call to action. The shell leads the sidebar with it,
    and it is the first thing a new user reaches for; burying it as an inline "+"
    inside a section label hides the primary action. */
 .new-task-button {

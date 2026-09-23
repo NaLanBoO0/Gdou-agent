@@ -6,14 +6,14 @@
 			http-equiv="Content-Security-Policy"
 			content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:"
 		/>
-		<title>GDOU agent</title>
+		<title>Gdouwork</title>
 		<link rel="stylesheet" href="tokens.css" />
 		<link rel="stylesheet" href="shell.css" />
 		<link rel="stylesheet" href="chat.css" />
 		<link rel="stylesheet" href="panels.css" />
 	</head>
 	<body>
-		<div class="sztu-shell" id="shell">
+		<div class="gdou-shell" id="shell">
 			<!-- The window is frameless, so this bar is the window chrome. -->
 			<header class="titlebar">
 				<span class="window-mark"></span>
@@ -53,7 +53,7 @@
 						<div class="app-menu-popover" id="menu-help" hidden>
 							<button type="button" data-command="diagnostics">构建链路自检</button>
 							<div class="app-menu-separator"></div>
-							<button type="button" data-command="about">关于 GDOU agent</button>
+							<button type="button" data-command="about">关于 Gdouwork</button>
 						</div>
 					</div>
 				</nav>
@@ -195,7 +195,7 @@
 										<div class="hero">
 											<div class="mascot">G</div>
 											<div>
-												<h1>GDOU agent</h1>
+												<h1>Gdouwork</h1>
 												<p>基于 pi 内核的自定义 agent</p>
 											</div>
 										</div>
@@ -219,7 +219,7 @@
 									<span id="status-text"></span>
 								</div>
 								<div id="expert-warning" class="expert-warning" hidden></div>
-								<form class="sztu-composer" id="composer">
+								<form class="gdou-composer" id="composer">
 									<textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>
 									<div class="composer-toolbar">
 										<span></span>
@@ -430,6 +430,7 @@
 			<p class="model-menu-note" id="model-menu-note"></p>
 		</section>
 
+		<script src="marked.umd.js"></script>
 		<script src="app.js"></script>
 	</body>
 </html>

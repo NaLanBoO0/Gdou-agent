@@ -10,8 +10,8 @@
  * over `file://` — Chromium blocks them — which is why this is not split into
  * modules.)
  *
- * The shell — titlebar, sidebar, inspector — is SztuCode's, because the two
- * apps are meant to read as one product. The DOM contract is not: `check:gui`
+ * The shell — titlebar, sidebar, inspector — is the desktop workbench, because
+ * the two apps are meant to read as one product. The DOM contract is not: `check:gui`
  * drives this window from outside and asserts on specific ids and classes, so
  * names like `.msg-user .body`, `.tool-name`, `.menu-row` and `#cwd` are
  * load-bearing. Renaming one silently turns an assertion into a no-op, which is
@@ -58,48 +58,24 @@ function escapeHtml(text) {
 	return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function renderInline(text) {
-	return escapeHtml(text)
-		.replace(/`([^`\n]+)`/g, "<code>$1</code>")
-		.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>")
-		.replace(/\n/g, "<br>");
-}
-
-function renderParagraphs(text) {
-	return text
-		.split(/\n{2,}/)
-		.map((chunk) => chunk.trim())
-		.filter((chunk) => chunk.length > 0)
-		.map((chunk) => `<p>${renderInline(chunk)}</p>`)
-		.join("");
-}
-
 /**
- * Render the subset of markdown the model actually produces often: fenced code
- * blocks, inline code, and bold. A full parser is more surface than this screen
- * needs; anything it cannot handle still reads fine as plain text.
+ * Render assistant text as full markdown, via `marked` (vendored into
+ * `renderer/marked.umd.js`).
  *
- * Code blocks are split out before any inline rule runs, so nothing rewrites
- * their contents, and they are emitted as siblings of paragraphs rather than
- * nested inside them.
+ * The previous hand-rolled renderer handled only code blocks, inline code, and
+ * bold — so a reply with headings, lists, tables, or blockquotes came out as an
+ * undifferentiated wall of text. `marked` is the same engine the shell uses, so
+ * switching to it is not a styling change but a replacement of the parser
+ * itself. `breaks: true` keeps single newlines as line breaks, matching how the
+ * model's raw output reads.
  */
 function renderMarkdown(text) {
-	const segments = [];
-	const fenced = /```[^\n]*\n([\s\S]*?)```/g;
-	let cursor = 0;
-	let match = fenced.exec(text);
-
-	while (match !== null) {
-		if (match.index > cursor) segments.push({ code: false, value: text.slice(cursor, match.index) });
-		segments.push({ code: true, value: match[1].replace(/\n$/, "") });
-		cursor = match.index + match[0].length;
-		match = fenced.exec(text);
+	if (typeof marked === "undefined") {
+		// The script tag failed to load (missing vendored file). Fall back to
+		// escaped plain text rather than crashing the whole render.
+		return `<p>${escapeHtml(text).replace(/\n/g, "<br>")}</p>`;
 	}
-	if (cursor < text.length) segments.push({ code: false, value: text.slice(cursor) });
-
-	return segments
-		.map((segment) => (segment.code ? `<pre><code>${escapeHtml(segment.value)}</code></pre>` : renderParagraphs(segment.value)))
-		.join("");
+	return marked.parse(text, { async: false, breaks: true });
 }
 
 /** A short, legible summary of a tool call's arguments. */
@@ -144,6 +120,8 @@ const state = {
 	running: false,
 	/** The assistant body currently receiving deltas. */
 	assistant: null,
+	/** The thinking panel currently receiving deltas, so they accumulate. */
+	thinking: null,
 	/** Live tool blocks, keyed by tool call id. */
 	tools: new Map(),
 	/** Latest split between the transcript and what the model is shown. */
@@ -240,6 +218,10 @@ function append(node) {
 function appendToolNode(node) {
 	const last = transcriptEl.lastElementChild;
 
+	// A tool call always lands inside a group. The group is the "what is the
+	// agent using right now" summary — a running one folds by default and shows
+	// "正在使用 N 个工具" — so even the first call of a turn gets a group rather
+	// than sitting as a lone open card.
 	if (last && last.classList.contains("tool-group")) {
 		last.querySelector(".tool-group-body").append(node);
 		refreshToolGroup(last);
@@ -256,18 +238,26 @@ function appendToolNode(node) {
 		return;
 	}
 
-	transcriptEl.append(node);
+	// First tool of a turn: start a fresh group around it.
+	const group = createToolGroup();
+	group.querySelector(".tool-group-body").append(node);
+	transcriptEl.append(group);
+	refreshToolGroup(group);
 }
 
 function createToolGroup() {
-	const group = element("div", "tool-group open");
+	const group = element("div", "tool-group running");
 	const head = element("button", "tool-group-head");
 	head.type = "button";
 
-	const caret = element("span", "tool-group-caret", "▾");
+	const caret = element("span", "tool-group-caret", "▸");
+	// The three dots signal "still working" without needing the group open — a
+	// running group folds by default, and the dots are the only hint that work
+	// is ongoing underneath.
+	const dots = element("span", "tool-group-dots");
 	const label = element("span", "tool-group-label");
 	const count = element("span", "tool-group-count");
-	head.append(caret, label, count);
+	head.append(caret, dots, label, count);
 	head.addEventListener("click", () => {
 		const open = group.classList.toggle("open");
 		caret.textContent = open ? "▾" : "▸";
@@ -291,7 +281,9 @@ function refreshToolGroup(group) {
 	const label = group.querySelector(".tool-group-label");
 	const count = group.querySelector(".tool-group-count");
 	label.textContent = unique.slice(0, 4).join(" · ") + (unique.length > 4 ? " …" : "");
-	count.textContent = `${names.length} 次调用`;
+	// While running, "N 个工具" reads as "what is in flight"; once finished, the
+	// dots leave and the count reads as a plain summary.
+	count.textContent = group.classList.contains("running") ? `正在使用 ${names.length} 个工具` : `${names.length} 次调用`;
 }
 
 /** Collapse finished groups; a group that is still running stays open. */
@@ -301,6 +293,12 @@ function collapseFinishedToolGroups() {
 		const caret = group.querySelector(".tool-group-caret");
 		if (caret) caret.textContent = "▸";
 	}
+	// A finished group is no longer "in flight": drop the running state so the
+	// header stops saying "正在使用" and the dots stop bouncing.
+	for (const group of transcriptEl.querySelectorAll(".tool-group.running")) {
+		group.classList.remove("running");
+		refreshToolGroup(group);
+	}
 }
 
 function clearTranscript() {
@@ -308,6 +306,7 @@ function clearTranscript() {
 		if (node.id !== "empty") node.remove();
 	}
 	state.assistant = null;
+	state.thinking = null;
 	state.tools.clear();
 	state.turnCount = 0;
 	setEmptyVisible(true);
@@ -415,21 +414,59 @@ function addNotice(text) {
 
 function beginAssistant() {
 	const wrapper = element("div", "msg msg-assistant");
-	const body = element("div", "body");
+	const body = element("div", "body streaming");
 	wrapper.append(body);
 	append(wrapper);
 	state.assistant = body;
 }
 
 function addThinking(text) {
-	const wrapper = element("div", "msg msg-assistant");
-	wrapper.append(element("div", "thinking", text));
-	append(wrapper);
+	// Accumulate into one panel, like assistant text does. The three bouncing
+	// dots stay visible for the whole thinking stream, and the text grows
+	// alongside them.
+	if (!state.thinking) {
+		const wrapper = element("div", "msg msg-assistant");
+		const thinking = element("div", "thinking");
+		thinking.append(element("span", "thinking-dots"), element("span", "thinking-text", ""));
+		wrapper.append(thinking);
+		append(wrapper);
+		state.thinking = thinking;
+	}
+	const liveText = state.thinking.querySelector(".thinking-text");
+	if (liveText) {
+		// The placeholder text is not real reasoning; replace it with the first
+		// actual delta rather than appending "thinking…" in front of it.
+		if (liveText.textContent === "思考中…") liveText.textContent = "";
+		liveText.textContent += text;
+	}
+}
+
+/**
+ * Show a "thinking…" placeholder while the model produces its first output.
+ *
+ * The gap between the user sending and the first token — or the first tool call
+ * — is the one place a reader has *no* feedback at all, whether or not the
+ * model is doing explicit reasoning. A bouncing "thinking…" panel fills it; the
+ * real output clears it as soon as it arrives.
+ */
+function beginThinkingPlaceholder() {
+	if (state.thinking) return;
+	addThinking("");
+	const liveText = state.thinking?.querySelector(".thinking-text");
+	if (liveText) liveText.textContent = "思考中…";
+}
+
+/** End the thinking phase: remove the panel and drop the reference. */
+function endThinking() {
+	if (state.thinking) {
+		state.thinking.remove();
+		state.thinking = null;
+	}
 }
 
 function startTool(event) {
 	const wrapper = element("div", "msg");
-	const block = element("div", "tool");
+	const block = element("div", "tool running");
 	block.dataset.toolId = event.id;
 
 	const head = element("button", "tool-head");
@@ -555,7 +592,15 @@ function renderArtifactCards(target, items) {
 		text.append(name, meta);
 		card.append(icon, text);
 
-		card.addEventListener("click", () => openArtifact(item));
+		// A file the model delivered should open with one click, not two. The card
+		// opens the file in the OS's default app; a separate "open" affordance is
+		// not needed on a card that already has exactly one job. URLs and inline
+		// previews are the exception: those go to the inspector instead.
+		if (item.kind === "url") {
+			card.addEventListener("click", () => openArtifact(item));
+		} else {
+			card.addEventListener("click", () => void openArtifactExternally(item));
+		}
 		list.append(card);
 	}
 	target.append(list);
@@ -586,6 +631,8 @@ function endTool(event) {
 
 	live.status.textContent = event.isError ? "失败" : "完成";
 	live.status.classList.add(event.isError ? "bad" : "ok");
+	live.block.classList.remove("running");
+	if (event.isError) live.block.classList.add("failed");
 	state.tools.delete(event.id);
 }
 
@@ -596,6 +643,7 @@ function handleEvent(event) {
 		case "run_start":
 			state.running = true;
 			setRunning(true);
+			beginThinkingPlaceholder();
 			return;
 
 		// Live runs never emit this — `send()` adds the bubble itself so the
@@ -606,10 +654,14 @@ function handleEvent(event) {
 			return;
 
 		case "assistant_start":
+			// Thinking is over once the real answer begins: the bouncing dots stop
+			// and the panel freezes as a finished thought.
+			endThinking();
 			beginAssistant();
 			return;
 
 		case "text_delta":
+			endThinking();
 			if (!state.assistant) beginAssistant();
 			state.assistant.textContent += event.text;
 			autoScroll();
@@ -621,13 +673,18 @@ function handleEvent(event) {
 
 		case "assistant_end":
 			// Re-render now that the message is complete and markdown is safe
-			// to parse.
-			if (state.assistant) state.assistant.innerHTML = renderMarkdown(state.assistant.textContent ?? "");
+			// to parse. The streaming class (and its caret) comes off at the same
+			// time: a finished reply is not typing.
+			if (state.assistant) {
+				state.assistant.classList.remove("streaming");
+				state.assistant.innerHTML = renderMarkdown(state.assistant.textContent ?? "");
+			}
 			state.assistant = null;
 			autoScroll();
 			return;
 
 		case "tool_start":
+			endThinking();
 			startTool(event);
 			return;
 
@@ -1188,6 +1245,23 @@ function showToolDetail(name, output) {
 }
 
 /**
+ * Open a delivered file in the OS's default application.
+ *
+ * The one-click path for a delivered file: this is what the user actually wants
+ * when they click a report, image, or video the model produced. Backed by the
+ * same `present_files` allowlist as the preview, so it cannot launch an
+ * arbitrary path. A failure is surfaced inline rather than swallowed, because a
+ * silent "nothing happened" is the worst possible outcome for a click.
+ */
+async function openArtifactExternally(item) {
+	try {
+		await window.gdou.openArtifact(item.target);
+	} catch (error) {
+		addError(`无法打开 ${item.name}：${error.message}`);
+	}
+}
+
+/**
  * Show a delivered artifact in the inspector.
  *
  * HTML goes into a fully sandboxed iframe (`sandbox=""`), which blocks scripts
@@ -1203,7 +1277,17 @@ async function openArtifact(item) {
 	const box = element("div", "context-item");
 	box.id = "inspector-artifact";
 	const inner = element("div");
-	inner.append(element("b", null, item.name));
+	const head = element("div", "artifact-preview-head");
+	head.append(element("b", null, item.name));
+	// Everything except a URL can also be opened in its default app, which is the
+	// only way to see a file too large to preview inline.
+	if (item.kind !== "url") {
+		const open = element("button", "artifact-preview-open", "用系统应用打开");
+		open.type = "button";
+		open.addEventListener("click", () => void openArtifactExternally(item));
+		head.append(open);
+	}
+	inner.append(head);
 
 	if (item.kind === "url") {
 		const link = element("a", "artifact-open", item.target);
@@ -1215,7 +1299,13 @@ async function openArtifact(item) {
 		try {
 			const data = await window.gdou.readArtifact(item.target);
 			if (data.tooLarge) {
-				inner.append(element("span", null, `文件 ${formatSize(data.size)}，超过面板预览上限，请直接打开它。`));
+				inner.append(
+					element(
+						"span",
+						null,
+						`文件 ${formatSize(data.size)}，超过面板预览上限，请点击右上角「用系统应用打开」。`,
+					),
+				);
 			} else if (data.dataUrl) {
 				const image = document.createElement("img");
 				image.className = "artifact-image";
@@ -1259,7 +1349,13 @@ function renderArtifactList() {
 				element("span", "artifact-row__name", item.name),
 				element("span", "artifact-row__meta", PREVIEW_LABEL[item.preview] ?? "文件"),
 			);
-			row.addEventListener("click", () => void openArtifact(item));
+			// Clicking a delivered file opens it in the default app; a URL opens in
+			// the browser. Preview remains reachable from the message cards.
+			if (item.kind === "url") {
+				row.addEventListener("click", () => void openArtifact(item));
+			} else {
+				row.addEventListener("click", () => void openArtifactExternally(item));
+			}
 			return row;
 		}),
 	);
@@ -1603,7 +1699,7 @@ function syncPickers() {
 /**
  * The model switcher in the composer.
  *
- * Ported in shape from the shell this interface follows (SztuCode's
+ * Ported in shape from the shell this interface follows (its
  * `ModelConfigMenu`): a trigger showing the running model, a popover listing
  * everything usable grouped by provider, and a gear that jumps to the page where
  * keys are entered.
@@ -2274,7 +2370,7 @@ const MENU_COMMANDS = {
 	diagnostics: () => setView("diagnostics"),
 	about: () =>
 		addNotice(
-			"GDOU agent — 基于 pi 内核的自定义 agent。内核跑在 Electron 主进程内，渲染进程零构建；模式决定能做什么，专家决定该怎么想。",
+			"Gdouwork — 基于 pi 内核的自定义 agent。内核跑在 Electron 主进程内，渲染进程零构建；模式决定能做什么，专家决定该怎么想。",
 		),
 };
 

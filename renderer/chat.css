@@ -1,7 +1,7 @@
 /**
  * Conversation view: the transcript, tool cards, and the composer.
  *
- * Layout follows SztuCode's task canvas — a centred 735px column with the
+ * Layout follows the shell's task canvas — a centred 735px column with the
  * composer pinned below it — because that is what makes a long conversation
  * readable on a wide window. A full-width transcript on a 2560px display puts
  * the text so far from the reader's eye that they lose their place.
@@ -183,6 +183,20 @@
 
 .msg {
 	margin-bottom: 22px;
+	animation: msg-enter 0.18s ease-out;
+}
+
+/* Messages slide up and fade in as they arrive. Kept short and subtle so a long
+   transcript does not feel like it is constantly moving. */
+@keyframes msg-enter {
+	from {
+		opacity: 0;
+		transform: translateY(6px);
+	}
+	to {
+		opacity: 1;
+		transform: translateY(0);
+	}
 }
 
 .msg:last-child {
@@ -217,6 +231,24 @@
 	font-size: var(--text-lg);
 	line-height: 1.6;
 	overflow-wrap: break-word;
+}
+
+/* The streaming caret: a blinking bar at the end of the text while the model is
+   typing, the most direct "it is answering" signal. Removed on assistant_end. */
+.msg-assistant .body.streaming::after {
+	content: "";
+	display: inline-block;
+	width: 7px;
+	height: 15px;
+	margin: 0 0 -2px 3px;
+	background: var(--accent);
+	animation: token-caret 0.8s steps(1) infinite;
+}
+
+@keyframes token-caret {
+	50% {
+		opacity: 0;
+	}
 }
 
 .msg-assistant .body > :first-child {
@@ -293,13 +325,141 @@
 	text-decoration: underline;
 }
 
+/* Elements marked emits that the hand-rolled renderer never produced. */
+.msg-assistant .body blockquote {
+	margin: 0 0 1.2em;
+	padding: 2px 0 2px 14px;
+	color: var(--text-muted);
+	border-left: 3px solid var(--border-strong);
+}
+
+.msg-assistant .body blockquote p {
+	margin: 0;
+}
+
+.msg-assistant .body table {
+	display: block;
+	overflow-x: auto;
+	margin: 0 0 1.2em;
+	border-collapse: collapse;
+	font-size: var(--text-base);
+}
+
+.msg-assistant .body th,
+.msg-assistant .body td {
+	padding: 6px 12px;
+	border: 1px solid var(--border);
+	text-align: left;
+}
+
+.msg-assistant .body th {
+	color: var(--text-strong);
+	background: var(--surface-soft);
+	font-weight: 500;
+}
+
+.msg-assistant .body tr:nth-child(even) td {
+	background: var(--surface-sunken);
+}
+
+.msg-assistant .body hr {
+	margin: 1.4em 0;
+	border: 0;
+	border-top: 1px solid var(--border);
+}
+
+.msg-assistant .body strong {
+	color: var(--text-strong);
+	font-weight: 600;
+}
+
+.msg-assistant .body img {
+	max-width: 100%;
+	border-radius: var(--radius);
+}
+
 .msg-assistant .thinking {
-	padding-left: 10px;
+	position: relative;
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	padding: 5px 2px;
 	color: var(--text-faint);
-	border-left: 2px solid var(--border);
 	font-size: var(--text-md);
 	font-style: italic;
 	white-space: pre-wrap;
+}
+
+/* The three bouncing dots: the "still thinking" signal, distinct from the text
+   so a reader sees both "it is working" and "here is what it is thinking". */
+.thinking-dots {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 4px;
+	margin-top: 5px;
+}
+
+.thinking-dots::before,
+.thinking-dots::after {
+	content: "";
+	width: 5px;
+	height: 5px;
+	background: var(--text-faint);
+	border-radius: 50%;
+	animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.thinking-dots::before {
+	animation-delay: 0.15s;
+}
+
+.thinking-dots::after {
+	animation-delay: 0.3s;
+}
+
+@keyframes thinking-bounce {
+	0%,
+	60%,
+	100% {
+		transform: translateY(0);
+		opacity: 0.35;
+	}
+	30% {
+		transform: translateY(-4px);
+		opacity: 1;
+	}
+}
+
+.thinking-text {
+	min-width: 0;
+}
+
+/* While the reasoning streams, a light band sweeps across the panel — the
+   running-state signal the shell uses (300px band, ease-out, loop). */
+.msg-assistant .thinking:has(.thinking-dots) {
+	overflow: hidden;
+}
+
+.msg-assistant .thinking:has(.thinking-dots)::after {
+	content: "";
+	position: absolute;
+	inset-block: 0;
+	left: 0;
+	width: 200px;
+	pointer-events: none;
+	background: linear-gradient(90deg, transparent 0%, color-mix(in srgb, var(--text-faint) 14%, transparent) 55%, transparent 100%);
+	animation: thinking-sweep 2.6s ease-out infinite;
+}
+
+@keyframes thinking-sweep {
+	0% {
+		left: -200px;
+	}
+	90%,
+	100% {
+		left: 100%;
+	}
 }
 
 /* A failure is worth interrupting for, so it gets a box rather than a tint. */
@@ -332,6 +492,18 @@
 	background: var(--surface-raised);
 	border: 1px solid var(--border);
 	border-radius: 7px;
+	transition: border-color var(--speed) var(--ease);
+}
+
+/* While the call is still running, a purple border marks it as in-flight — the
+   same signal the shell's `.tool-call-card.running` uses. Cleared on completion,
+   swapped to a red border on failure. */
+.tool.running {
+	border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+}
+
+.tool.failed {
+	border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
 }
 
 .tool-head {
@@ -423,6 +595,44 @@
 	flex: 0 0 auto;
 	color: var(--text-faint);
 	font-variant-numeric: tabular-nums;
+}
+
+/* The three bouncing dots in a running group's header: the "still working"
+   signal, visible even while the group is folded. Removed when the group
+   finishes. */
+.tool-group-dots {
+	display: inline-flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 3px;
+}
+
+.tool-group-dots::before,
+.tool-group-dots::after {
+	content: "";
+	width: 4px;
+	height: 4px;
+	background: var(--accent);
+	border-radius: 50%;
+	animation: thinking-bounce 1.2s ease-in-out infinite;
+}
+
+.tool-group-dots::before {
+	animation-delay: 0.15s;
+}
+
+.tool-group-dots::after {
+	animation-delay: 0.3s;
+}
+
+.tool-group:not(.running) .tool-group-dots {
+	display: none;
+}
+
+/* A running group gets a soft accent border so "in flight" reads at a glance,
+   the same way a running tool card does. */
+.tool-group.running .tool-group-head {
+	border-color: color-mix(in srgb, var(--accent) 40%, var(--border));
 }
 
 /* Inside a group the rows are indented and their own frames dropped, so the
@@ -523,7 +733,7 @@
 	display: none;
 }
 
-.sztu-composer {
+.gdou-composer {
 	overflow: hidden;
 	width: min(800px, calc(100% - 48px));
 	margin: 0 auto 17px;
@@ -533,11 +743,11 @@
 	box-shadow: var(--shadow-card);
 }
 
-.sztu-composer:focus-within {
+.gdou-composer:focus-within {
 	border-color: var(--border-strong);
 }
 
-.sztu-composer textarea {
+.gdou-composer textarea {
 	display: block;
 	width: 100%;
 	min-height: 86px;
@@ -552,7 +762,7 @@
 	line-height: 1.6;
 }
 
-.sztu-composer textarea::placeholder {
+.gdou-composer textarea::placeholder {
 	color: var(--text-faint);
 }
 

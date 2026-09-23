@@ -34,6 +34,7 @@ import {
 } from "./permission.ts";
 import { composePrompt, narrowTools, type RecipeRequest, type SessionRecipe, type ToolSelection } from "./recipe.ts";
 import { ModelRuntime } from "./runtime.ts";
+import { connectMcp } from "../mcp/index.ts";
 
 export interface CreateAgentOptions {
 	/**
@@ -197,6 +198,14 @@ export interface AgentSession {
 	 * a silently missing skill looks exactly like a typo in the id.
 	 */
 	readonly skillErrors: string[];
+	/**
+	 * MCP servers that failed to connect, as `name: reason`.
+	 *
+	 * Same reporting discipline as `skillErrors`: a server the user configured
+	 * but that did not come up should be visible, not silently absent — its tools
+	 * missing otherwise looks like the config was never read.
+	 */
+	readonly mcpErrors: Record<string, string>;
 	/** The permission policy this session enforces. */
 	readonly policy: PermissionPolicy;
 	/**
@@ -248,6 +257,8 @@ interface ResolvedSetup {
 	toolExecution: "parallel" | "sequential";
 	policy: PermissionPolicy;
 	loopRepeatLimit: number;
+	/** Skill ids the user has turned off; hidden from this session's catalog. */
+	disabledSkills: ReadonlySet<string>;
 }
 
 function missingCredentialsError(): Error {
@@ -358,6 +369,7 @@ function resolveSetup(options: CreateAgentOptions): ResolvedSetup {
 		toolExecution: options.toolExecution ?? settings.toolExecution ?? profile.toolExecution ?? "parallel",
 		policy: options.permission ?? settings.permission ?? DEFAULT_PERMISSION_POLICY,
 		loopRepeatLimit: options.loopRepeatLimit ?? settings.loopRepeatLimit ?? DEFAULT_LOOP_REPEAT_LIMIT,
+		disabledSkills: new Set(settings.disabledSkills ?? []),
 	};
 }
 
@@ -408,16 +420,25 @@ export interface StreamFnOptions {
 }
 
 /** Wire a resolved setup plus a concrete tool set into a usable session. */
-function assemble(setup: ResolvedSetup, selection: ToolSelection, options: CreateAgentOptions): AgentSession {
-	const { recipe, profile, expert, runtime, model, fallback, cwd, thinkingLevel, toolExecution, policy, loopRepeatLimit } =
+function assemble(
+	setup: ResolvedSetup,
+	selection: ToolSelection,
+	options: CreateAgentOptions,
+	mcpTools: AnyTool[],
+	mcpErrors: Record<string, string>,
+	mcpClose: () => Promise<void>,
+): AgentSession {
+	const { recipe, profile, expert, runtime, model, fallback, cwd, thinkingLevel, toolExecution, policy, loopRepeatLimit, disabledSkills } =
 		setup;
 	const { tools, unavailable } = selection;
 
 	// Skills are loaded here, once per session, and reduced to names + summaries
 	// in the prompt. The bodies stay out until the model asks for them — that is
 	// the entire cost win of progressive disclosure, and it is why the catalog is
-	// injected as a list rather than concatenated.
-	const skills = loadSkills(cwd);
+	// injected as a list rather than concatenated. Skills the user turned off are
+	// left out of that catalog (see `skills/registry.ts` for why an explicit
+	// `load_skill` can still reach them).
+	const skills = loadSkills(cwd, disabledSkills);
 
 	// `load_skill` rides along with the mode's own tools. It is not part of the
 	// mode's set because it is not a capability the mode decides — every session
@@ -427,7 +448,6 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 	// the session's reported tool list and the agent's actual tool list cannot
 	// disagree about whether it exists.
 	const allTools = [...tools, loadSkillTool(cwd)];
-
 	const denials: PermissionDenial[] = [];
 	const permissionContext = defaultPermissionContext(cwd);
 
@@ -500,6 +520,12 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 	if (options.includeDelegate !== false) {
 		allTools.push(delegateTool(cwd, recipe.mode, streamFn));
 	}
+
+	// MCP tools ride along like `load_skill` and `delegate`: they are not a mode
+	// capability the expert narrows, because they arrive from the environment the
+	// user configured, not from the mode's contract. Every one is prefixed
+	// `mcp__<server>__<tool>`, so it cannot collide with a built-in name.
+	for (const tool of mcpTools) allTools.push(tool);
 
 	const agent = new Agent({
 		initialState: {
@@ -627,6 +653,7 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 		unavailableTools: unavailable,
 		skills: skills.skills,
 		skillErrors: skills.errors,
+		mcpErrors,
 		policy,
 		denials,
 		model,
@@ -649,6 +676,11 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 		dispose() {
 			unsubscribeAgent();
 			listeners.clear();
+			// MCP servers are child processes owned by this session; leaving them
+			// running after the session is gone would leak them until the process
+			// exits. Best-effort: a server that hangs on close is not worse than
+			// the alternative of never trying.
+			void mcpClose();
 		},
 	};
 }
@@ -663,7 +695,11 @@ export async function createAgent(options: CreateAgentOptions = {}): Promise<Age
 	// The expert may only subtract from the mode's set — see `narrowTools` for
 	// why that is a safety property and not a style preference.
 	const selection = narrowTools(modeTools, setup.expert);
-	return assemble(setup, selection, options);
+	// MCP servers are connected here, before the session is assembled, because a
+	// server's tools must be known to mount them. A server that fails to connect
+	// is reported (via `mcpErrors`) rather than aborting the session.
+	const mcp = await connectMcp(setup.cwd);
+	return assemble(setup, selection, options, mcp.tools, mcp.errors, mcp.close);
 }
 
 export type { AgentMessage, AgentEvent };

@@ -17,7 +17,7 @@ import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { app, BrowserWindow, dialog, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, shell } from "electron";
 import type { AgentSession } from "../src/kernel/agent.ts";
 import { createAgent } from "../src/kernel/agent.ts";
 import { loadSettings, saveSettings } from "../src/config/settings.ts";
@@ -513,9 +513,9 @@ function createWindow(): BrowserWindow {
 		// Matches the shell's own background so the first paint does not flash a
 		// different colour before the stylesheet lands.
 		backgroundColor: "#f7f9fa",
-		title: "GDOU agent",
+		title: "Gdouwork",
 		// The window is frameless and the app draws its own titlebar, which is
-		// what the SztuCode shell expects. `autoHideMenuBar` is moot without a
+		// what the shell expects. `autoHideMenuBar` is moot without a
 		// frame but is kept so a platform that insists on a menu bar hides it.
 		frame: false,
 		autoHideMenuBar: true,
@@ -630,6 +630,22 @@ void app.whenReady().then(() => {
 			return { dataUrl: `data:${mime};base64,${readFileSync(path).toString("base64")}`, size: stats.size };
 		}
 		return { text: readFileSync(path, "utf-8"), size: stats.size, extension };
+	});
+
+	/**
+	 * Open a delivered artifact in the OS's default application.
+	 *
+	 * Same allowlist as `artifact:read`: only a path the model handed over with
+	 * `present_files` can be opened, so the model cannot use the UI to launch an
+	 * arbitrary local file. `shell.openPath` resolves to a non-empty error string
+	 * on failure and `""` on success, which maps cleanly onto the renderer's
+	 * error handling.
+	 */
+	ipcMain.handle("artifact:open", async (_event, path: string) => {
+		if (!presentedPaths.has(path)) throw new Error(`未交付的文件不可打开：${path}`);
+		const error = await shell.openPath(path);
+		if (error) throw new Error(error);
+		return true;
 	});
 
 	/**

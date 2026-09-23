@@ -1,0 +1,147 @@
+﻿/* 任务输入卡片：外层同时包住待处理队列与输入框，两者恒等宽、共用同一张卡片 */
+.queue-dock {
+  position: relative;
+  z-index: 6;
+  width: min(812px, calc(100% - 64px)); /* 与 .task-conversation .gdou-composer 同款宽度公式 */
+  margin: 0 auto 17px;
+  overflow: visible; /* 斜杠菜单与模型气泡需要溢出显示 */
+  color: var(--text-muted);
+  font-size: 13px; /* 与输入框正文同号，队列条不再显得比输入框小一号 */
+}
+
+/* 卡片堆独立于输入框：外层容器不再充当玻璃卡片层，仅作布局与定位 */
+:root:not([data-wallpaper="none"]) .task-conversation > .queue-dock {
+  background: transparent !important;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* 待处理区只增加内容，不改变输入卡片的底色、描边或焦点反馈。 */
+.queue-dock__queue {
+  position: relative;
+  margin: 0 0 8px;
+}
+
+
+/* 卡片堆移到输入框外后，输入框自己承载卡片外观 */
+.task-conversation > .queue-dock > .gdou-composer,
+.task-conversation > .queue-dock > .user-question-composer {
+  width: 100%;
+  margin: 0;
+  background: var(--surface);
+  border: 1px solid #e4e6e8;
+  border-radius: 20px;
+  box-shadow: 0 3px 10px rgb(28 36 44 / 4%);
+}
+
+.task-conversation > .queue-dock > .gdou-composer:focus-within {
+  border-color: #d7dade;
+  box-shadow: 0 3px 10px rgb(28 36 44 / 5%);
+}
+
+.queue-dock__summary,
+.queue-dock__item {
+  border: 0; /* 无框线 */
+  background: transparent;
+  box-shadow: none;
+}
+
+.queue-dock__summary {
+  display: flex;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  text-align: left;
+  transition: background-color 140ms ease;
+}
+
+.queue-dock__summary:hover { background: var(--surface); }
+.queue-dock__summary span { flex: 1; }
+.queue-dock__summary > svg:last-child { transition: transform 140ms ease; }
+.queue-dock__summary[aria-expanded="true"] > svg:last-child { transform: rotate(180deg); }
+.queue-dock__deck { position: relative; height: 58px; }
+
+.queue-dock__item {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  min-width: 0;
+  height: 42px;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 6px 5px 10px;
+  background: var(--surface-raised);
+  border-radius: 9px;
+  box-shadow: 0 1px 2px rgb(28 36 44 / 6%);
+  /* 层深驱动的前后堆叠：越靠后越往上缩、越小、越淡 */
+  transform: translateY(calc(var(--depth, 0) * -8px)) scale(calc(1 - var(--depth, 0) * 0.025));
+  opacity: calc(1 - var(--depth, 0) * 0.3);
+  transition: transform 260ms cubic-bezier(.22, .85, .25, 1), opacity 220ms ease;
+}
+.queue-dock__item--hidden { opacity: 0; pointer-events: none; }
+.queue-dock__counter { position: absolute; top: 5px; right: 12px; font-size: 10px; line-height: 1; color: var(--text-faint); }
+
+.queue-dock__item--front:hover { background: var(--surface-soft); }
+
+/* 序号做成小徽标，与右侧按钮组在视觉上呼应 */
+.queue-dock__lead {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: var(--text-muted);
+  background: transparent;
+}
+
+
+.queue-dock__text { overflow: hidden; min-width: 0; flex: 1; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.queue-dock__item small {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  color: var(--text-muted);
+  background: var(--surface-soft);
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+
+/* 按钮组：统一落在一条柔性底槽里，三个操作视觉上归为一组 */
+.queue-dock__actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 1px;
+  padding: 2px;
+  background: var(--surface-soft);
+  border-radius: 8px;
+}
+
+
+.queue-dock__actions button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  color: var(--text-muted);
+  border-radius: 6px;
+  transition: color 120ms ease, background-color 120ms ease;
+}
+
+.queue-dock__actions button:hover:not(:disabled) { color: var(--text); background: var(--surface-raised); }
+.queue-dock__actions button:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent-soft); }
+.queue-dock__actions button:disabled { opacity: .34; }
+
+/* 删除用警示色、转入当前轮用强调色，三个操作不再长得一模一样 */
+.queue-dock__action--danger:hover:not(:disabled) { color: var(--danger); }
+.queue-dock__action--accent:hover:not(:disabled) { color: var(--accent); background: var(--accent-soft); }
+
+@media (max-width: 700px) {
+  /* 窄屏仍与输入框同宽，不单独放宽 */
+  .queue-dock__item small { display: none; }
+}

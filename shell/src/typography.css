@@ -1,0 +1,379 @@
+﻿/* Shared typography scale. Keep this stylesheet last so every product surface reads consistently. */
+:root {
+  /* 动效 token（借鉴 dsh ui-theme base.css）：统一缓动曲线 + 三档时长，只用于状态反馈 */
+  --sz-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --sz-duration-fast: 0.1s;
+  --sz-duration: 0.2s;
+  --sz-duration-slow: 0.3s;
+
+  --font-ui: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Segoe UI", sans-serif;
+  --font-code: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  --text-display-title: 34px;
+  --text-hero-title: 26px;
+  --text-page-title: 22px;
+  --text-brand-title: 17px;
+  --text-section-title: 16px;
+  --text-item-title: 14px;
+  --text-body: 14px;
+  --text-control: 13px;
+  --text-caption: 12px;
+  --text-micro: 11px;
+
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+}
+
+body,
+#app,
+.gdou-shell,
+.skill-center {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+}
+
+/* 让固定字号的历史组件也随“界面字号”实时缩放。 */
+#app {
+  zoom: var(--ui-font-scale, 1);
+}
+
+button,
+input,
+select,
+textarea {
+  font-family: inherit;
+  letter-spacing: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+p {
+  letter-spacing: 0;
+}
+
+.sidebar-brand h1,
+.project-create-card h1 {
+  font-family: var(--font-ui);
+}
+
+.agent-sidebar .sidebar-brand h1 {
+  font-size: calc(var(--text-brand-title) - 2px);
+}
+
+/* Page-level headings */
+:is(
+  .launcher-heading,
+  .plugin-heading,
+  .chat-automations,
+  .capability-view,
+  .settings-content,
+  .page-head,
+  .task-head,
+  .project-create-card,
+  .project-success
+) h1,
+:is(.new-chat, .empty-panel, .skills-empty) :is(h1, h2) {
+  font-family: var(--font-ui);
+  font-size: var(--text-page-title);
+  font-weight: 500;
+  line-height: 1.45;
+}
+
+/* Section and dialog headings */
+:is(
+  .work-context-card,
+  .automation-empty,
+  .skill-dialog,
+  .permission-confirm,
+  .featured-skills,
+  .skill-catalog__tabs
+) :is(h1, h2),
+.skill-catalog__tabs button {
+  font-family: var(--font-ui);
+  font-size: var(--text-section-title);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+/* Repeated item titles */
+:is(
+  .plugin-card,
+  .featured-skill,
+  .skill-card,
+  .capability-grid,
+  .task-intro
+) :is(h2, h3, b, strong) {
+  font-size: var(--text-item-title);
+  line-height: 1.5;
+}
+
+/* 会话区空状态引导文案：超大细体、图标在上、位置偏下 */
+.task-conversation--empty .task-stream {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 10vh;   /* 用随窗口缩放的 padding 实现"偏下"，参与布局 */
+}
+.task-conversation--empty .task-intro {
+  flex-direction: column;
+  gap: 18px;
+  margin-top: auto;    /* margin auto 居中：空间足则居中，不足则贴顶但不溢出 */
+  margin-bottom: auto;
+}
+.task-intro-icon {
+  display: grid;
+  place-items: center;
+  color: #a2a9ad;                 /* 纯线条灰色终端图标 */
+}
+.task-stream .task-intro b {
+  font-size: var(--text-hero-title);
+  font-weight: 400;               /* 细字体基础上稍微加粗 */
+}
+
+/* 矮窗口：压缩引导文案，保证能放得下且不被裁切 */
+@media (max-height: 600px) {
+  .task-conversation--empty .task-stream { padding-top: 3vh; }
+  .task-conversation--empty .task-intro { gap: 10px; }
+  .task-intro-icon svg { width: 24px; height: 24px; }
+  .task-stream .task-intro b { font-size: 19px; }
+}
+
+/* Reading surfaces use the reference's open, neutral rhythm. */
+.timeline-user-message,
+.token-stream,
+.turn-result .token-stream,
+.markdown-body,
+.task-conversation .gdou-composer textarea,
+.chat-composer > textarea,
+.task-launcher .landing-composer textarea {
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  font-weight: 400;
+  line-height: 1.75;
+}
+
+.task-launcher .launcher-heading h1 {
+  font-size: var(--text-display-title);
+}
+
+/* Navigation and form controls share one compact size. */
+:is(
+  .primary-nav,
+  .mode-switch,
+  .sidebar-tools,
+  .skill-center__topbar,
+  .skill-catalog__filters,
+  .plugin-categories,
+  .template-categories,
+  .permission-actions,
+  .project-picker-actions,
+  .settings-nav
+) button,
+:is(
+  .task-search,
+  .file-toolbar,
+  .global-search-form,
+  .project-picker-search,
+  .skill-center__actions,
+  .plugin-heading,
+  .automation-form,
+  .project-create-card
+) :is(input, select),
+.new-task-button,
+.workspace-trigger,
+.workspace-open-tab > button:first-child,
+.workspace-tool-menu button,
+.conversation-row,
+.project-row {
+  font-family: var(--font-ui);
+  font-size: var(--text-control);
+  line-height: 1.5;
+}
+
+.workspace-open-tab > button:first-child,
+.workspace-open-tab.active > button:first-child,
+.workspace-open-tab > button:first-child:focus-visible {
+  font-weight: 400;
+}
+
+/* Supporting copy is never smaller than 12px; compact technical labels use 11px. */
+:is(
+  .launcher-heading,
+  .plugin-heading,
+  .chat-automations,
+  .capability-view,
+  .skills-empty,
+  .project-create-card,
+  .automation-empty,
+  .skill-dialog,
+  .permission-confirm
+) p,
+:is(.featured-skill, .skill-card, .capability-grid, .task-intro) p,
+.side-label,
+.task-state-heading,
+.work-record > summary,
+.thinking-panel button,
+.tool-call-group__trigger,
+.tool-call-event__action,
+.tool-call-event__detail {
+  font-size: var(--text-caption);
+  line-height: 1.65;
+}
+
+small,
+kbd,
+.usage-line,
+.preview-kind,
+.preview-path,
+.artifact-list code,
+.context-file small,
+.work-context-card > header span,
+.turn-status span {
+  font-size: var(--text-micro);
+  line-height: 1.45;
+}
+
+code,
+pre,
+kbd,
+samp,
+.preview-path,
+.usage-line {
+  font-family: var(--font-code);
+}
+
+/* Reasoning prose contains natural language, so it follows the UI font. */
+.thinking-panel pre {
+  font-family: var(--font-ui);
+  font-size: var(--text-control);
+  line-height: 1.8;
+}
+
+/* Task summary uses a readable three-level scale within the compact inspector. */
+.task-summary-view,
+.task-summary-view button {
+  font-family: var(--font-ui);
+  letter-spacing: 0;
+}
+
+.task-summary-view .summary-section-trigger b {
+  font-size: var(--text-body);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.task-summary-view :is(
+  .summary-plan-list li,
+  .summary-empty b,
+  .artifact-list b,
+  .skill-list span,
+  .reference-context b
+) {
+  font-size: var(--text-control);
+  line-height: 1.6;
+}
+
+.task-summary-view :is(
+  .summary-section-trigger small,
+  .summary-empty p,
+  .artifact-list small,
+  .summary-refresh,
+  .reference-row > span,
+  .reference-row > small,
+  .reference-context > span,
+  .reference-context small
+) {
+  font-size: var(--text-caption);
+  line-height: 1.6;
+}
+
+.task-summary-view .artifact-list code {
+  font-size: var(--text-micro);
+  line-height: 1.45;
+}
+
+.task-summary-view .summary-plan-list li.in_progress {
+  font-weight: 400;
+}
+
+/* Slash invocation menu: wider command column and readable UI-sized supporting copy. */
+.slash-menu {
+  width: min(820px, 100%);
+  max-width: 100%;
+  font-family: var(--font-ui);
+}
+
+.slash-menu__scroll {
+  max-height: min(334px, 42vh);
+  padding: 5px;
+}
+
+.slash-menu__group h3 {
+  height: 25px;
+  padding-inline: 7px;
+  font-size: var(--text-caption);
+  line-height: 1.5;
+}
+
+.slash-menu__group h3 small {
+  font-size: var(--text-micro);
+}
+
+.slash-menu__group button {
+  grid-template-columns: 24px minmax(110px, 180px) minmax(0, 1fr) 16px;
+  gap: 8px;
+  min-height: 34px;
+  padding: 4px 7px;
+}
+
+.slash-menu__group button b {
+  font: 500 var(--text-control)/1.45 var(--font-code);
+}
+
+.slash-menu__group button > span:nth-of-type(2) {
+  font-size: var(--text-caption);
+  line-height: 1.4;
+}
+
+.slash-menu__empty b {
+  font-size: var(--text-control);
+}
+
+.slash-menu__empty span,
+.slash-menu__notice,
+.slash-menu > footer {
+  font-size: var(--text-caption);
+  line-height: 1.55;
+}
+
+.slash-menu > footer {
+  min-height: 32px;
+  padding-inline: 9px;
+}
+
+.slash-menu kbd {
+  font: 400 var(--text-micro)/1 var(--font-code);
+}
+
+@media (max-width: 900px) {
+  .slash-menu__group button {
+    grid-template-columns: 24px minmax(108px, 170px) minmax(0, 1fr) 16px;
+  }
+}
+
+@media (max-width: 760px) {
+  .task-launcher .launcher-heading h1 {
+    font-size: calc(var(--text-display-title) - 10px);
+  }
+
+  .slash-menu__group button {
+    grid-template-columns: 24px minmax(96px, 145px) minmax(0, 1fr) 14px;
+    gap: 8px;
+  }
+}

@@ -314,7 +314,7 @@ async function checkApp(): Promise<void> {
 	session.subscribe((event) => events.push(event));
 
 	const running = app.run({ banner: true });
-	await waitFor(() => terminal.plain.includes("GDOU agent"));
+	await waitFor(() => terminal.plain.includes("Gdouwork"));
 
 	console.log("\nStartup");
 	const startup = terminal.plain;

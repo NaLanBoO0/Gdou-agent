@@ -32,9 +32,30 @@ export const THINKING_LEVELS: readonly ThinkingLevel[] = [
 	"max",
 ];
 
+/**
+ * One saved model profile, as the shell's model manager stores it.
+ *
+ * Deliberately thin: a profile names a model spec the catalog already knows.
+ * Everything else the shell's editor collects (API addresses, sampling knobs)
+ * describes a runtime it would have to talk to on its own; what *we* can store
+ * and reuse is the spec, so that is all a profile is.
+ */
+export interface ModelProfile {
+	/** Stable id, chosen by the caller (the shell reuses it on edit). */
+	id: string;
+	/** Display name. */
+	name: string;
+	/** Model spec as "provider/modelId". */
+	model: string;
+}
+
 export interface Settings {
 	/** Default model as "provider/modelId". */
 	model?: string;
+	/** Named model profiles shown in the shell's model manager. */
+	modelProfiles?: ModelProfile[];
+	/** Skill ids the user has turned off; those are hidden from the catalog. */
+	disabledSkills?: string[];
 	/**
 	 * Default mode id (implemented in `src/profiles`).
 	 *
@@ -139,6 +160,23 @@ export function loadSettings(): Settings {
 	if (typeof input.loopRepeatLimit === "number" && Number.isInteger(input.loopRepeatLimit) && input.loopRepeatLimit >= 0) {
 		settings.loopRepeatLimit = input.loopRepeatLimit;
 	}
+	// Model profiles are validated entry by entry. A profile naming a model spec
+	// that no longer resolves is kept — resolution happens at use time and the
+	// message that names the bad spec is more useful than silently dropping it.
+	const profiles = Array.isArray(input.modelProfiles) ? (input.modelProfiles as unknown[]) : [];
+	const parsedProfiles: ModelProfile[] = [];
+	for (const entry of profiles) {
+		if (typeof entry !== "object" || entry === null) continue;
+		const raw = entry as Record<string, unknown>;
+		if (typeof raw.id !== "string" || typeof raw.name !== "string" || typeof raw.model !== "string") continue;
+		if (raw.id.length === 0 || raw.model.length === 0) continue;
+		parsedProfiles.push({ id: raw.id, name: raw.name, model: raw.model });
+	}
+	if (parsedProfiles.length > 0) settings.modelProfiles = parsedProfiles;
+	// Disabled skills are just ids; anything that is not a string is dropped.
+	const disabled = Array.isArray(input.disabledSkills) ? (input.disabledSkills as unknown[]) : [];
+	const parsedDisabled = disabled.filter((id): id is string => typeof id === "string" && id.length > 0);
+	if (parsedDisabled.length > 0) settings.disabledSkills = parsedDisabled;
 	if (input.toolExecution === "parallel" || input.toolExecution === "sequential") {
 		settings.toolExecution = input.toolExecution;
 	}
