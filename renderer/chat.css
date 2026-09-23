@@ -374,6 +374,62 @@
 	white-space: nowrap;
 }
 
+/* -------------------------------------------------------- tool grouping */
+
+/* A run of consecutive tool calls folds into one row. The body is hidden
+   rather than removed, so expanding needs no re-render and the `.tool`
+   elements stay in the document for anything that queries them. */
+.tool-group-body {
+	display: none;
+}
+
+.tool-group.open .tool-group-body {
+	display: block;
+}
+
+.tool-group-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	width: 100%;
+	padding: 7px 12px;
+	color: var(--text-muted);
+	text-align: left;
+	background: var(--surface-soft);
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	font-size: var(--text-base);
+}
+
+.tool-group-head:hover {
+	color: var(--text);
+	border-color: var(--border-secondary, var(--line));
+}
+
+.tool-group-caret {
+	flex: 0 0 auto;
+	color: var(--text-faint);
+}
+
+.tool-group-label {
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.tool-group-count {
+	margin-left: auto;
+	flex: 0 0 auto;
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+}
+
+/* Inside a group the rows are indented and their own frames dropped, so the
+   group reads as one unit rather than as a stack of unrelated cards. */
+.tool-group-body > .msg > .tool {
+	margin-left: 14px;
+}
+
 /* Line-level change summary on a file-mutating call. Sits before the state
    chip, which owns the `margin-left: auto` that pushes both to the right. */
 .change-badge {

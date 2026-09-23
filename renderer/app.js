@@ -196,6 +196,88 @@ function append(node) {
 	return node;
 }
 
+/**
+ * Fold a run of consecutive tool calls into one card.
+ *
+ * Two decisions worth stating, because both are about not making things worse:
+ *
+ * **Only from the second call.** A group of one is a tool row with a redundant
+ * header, and leaving single calls untouched means the common case — one tool
+ * per turn — renders exactly as it always did. That also keeps the existing
+ * DOM contract honest: the first `.tool` a check clicks is never inside a
+ * collapsed group unless there really were several calls.
+ *
+ * **Built retroactively.** The first call is appended normally; the group is
+ * created when a second one arrives to join it. There is no way to know a run
+ * is starting until the second call appears, and predicting would mean either
+ * buffering the first one or restructuring it after the fact.
+ */
+function appendToolNode(node) {
+	const last = transcriptEl.lastElementChild;
+
+	if (last && last.classList.contains("tool-group")) {
+		last.querySelector(".tool-group-body").append(node);
+		refreshToolGroup(last);
+		return;
+	}
+
+	// A lone tool call sitting where a group would start.
+	if (last && last.classList.contains("msg") && last.querySelector(":scope > .tool")) {
+		const group = createToolGroup();
+		transcriptEl.replaceChild(group, last);
+		const body = group.querySelector(".tool-group-body");
+		body.append(last, node);
+		refreshToolGroup(group);
+		return;
+	}
+
+	transcriptEl.append(node);
+}
+
+function createToolGroup() {
+	const group = element("div", "tool-group open");
+	const head = element("button", "tool-group-head");
+	head.type = "button";
+
+	const caret = element("span", "tool-group-caret", "▾");
+	const label = element("span", "tool-group-label");
+	const count = element("span", "tool-group-count");
+	head.append(caret, label, count);
+	head.addEventListener("click", () => {
+		const open = group.classList.toggle("open");
+		caret.textContent = open ? "▾" : "▸";
+	});
+
+	const body = element("div", "tool-group-body");
+	group.append(head, body);
+	return group;
+}
+
+/**
+ * Update a group's header from the calls inside it.
+ *
+ * The label names the tools rather than counting them: "read · edit · read"
+ * tells the user what happened, and "3 个工具" only tells them how many rows
+ * they are not looking at.
+ */
+function refreshToolGroup(group) {
+	const names = [...group.querySelectorAll(".tool-name")].map((el) => el.textContent);
+	const unique = [...new Set(names)];
+	const label = group.querySelector(".tool-group-label");
+	const count = group.querySelector(".tool-group-count");
+	label.textContent = unique.slice(0, 4).join(" · ") + (unique.length > 4 ? " …" : "");
+	count.textContent = `${names.length} 次调用`;
+}
+
+/** Collapse finished groups; a group that is still running stays open. */
+function collapseFinishedToolGroups() {
+	for (const group of transcriptEl.querySelectorAll(".tool-group.open")) {
+		group.classList.remove("open");
+		const caret = group.querySelector(".tool-group-caret");
+		if (caret) caret.textContent = "▸";
+	}
+}
+
 function clearTranscript() {
 	for (const node of [...transcriptEl.children]) {
 		if (node.id !== "empty") node.remove();
@@ -266,7 +348,11 @@ function startTool(event) {
 
 	block.append(head, body);
 	wrapper.append(block);
-	append(wrapper);
+	// Not `append()`: tool calls are grouped, and the group has to be created
+	// around this node rather than after it.
+	setEmptyVisible(false);
+	appendToolNode(wrapper);
+	autoScroll();
 
 	state.tools.set(event.id, { block, caret, body, status });
 }
@@ -465,6 +551,10 @@ function handleEvent(event) {
 		case "run_end":
 			state.running = false;
 			setRunning(false);
+			// Fold the finished turn's tool runs away. Done here rather than as
+			// each call ends, so the last batch stays visible while it is still
+			// the thing being watched.
+			collapseFinishedToolGroups();
 			return;
 
 		case "error":

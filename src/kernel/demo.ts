@@ -41,7 +41,7 @@ export interface ScriptedRun {
  * ask for something nonsensical — a `read` with no path, say. Whichever of
  * these the active profile actually exposes is the one used.
  */
-const CALLABLE_TOOLS = ["current_time", "ls"] as const;
+const CALLABLE_TOOLS = ["current_time", "list_notes", "ls"] as const;
 
 /**
  * A file the scripted run can hand over, if one of these exists in the working
@@ -81,19 +81,21 @@ const METADATA_MODEL = "deepseek/deepseek-flash";
  * script skips the tool call rather than calling something that does not exist.
  */
 export function scriptedRun(toolNames: readonly string[], cwd?: string): ScriptedRun {
-	const tool = CALLABLE_TOOLS.find((name) => toolNames.includes(name));
-
 	// Delivery is preferred over the generic probe when the profile supports it
 	// and a real file is available: it shows the artifact card, which is the
 	// part of the interface a preview most needs to demonstrate.
 	const presentable =
 		cwd !== undefined && toolNames.includes("present_files") ? findPresentable(cwd) : undefined;
 
-	const calls = presentable
-		? [fauxToolCall("present_files", { items: [presentable] })]
-		: tool
-			? [fauxToolCall(tool, {})]
-			: [];
+	// Two calls, not one, so the preview exercises tool grouping — a single call
+	// never forms a group, and a fold the preview cannot show is a fold nobody
+	// has looked at.
+	const calls = [];
+	if (presentable) calls.push(fauxToolCall("present_files", { items: [presentable] }));
+	for (const name of CALLABLE_TOOLS) {
+		if (calls.length >= 2) break;
+		if (toolNames.includes(name)) calls.push(fauxToolCall(name, {}));
+	}
 
 	const faux = fauxProvider();
 	faux.setResponses([

@@ -396,11 +396,52 @@ async function main() {
 		// The tool ran for real: `current_time` returns a formatted timestamp.
 		check("tool produced real output", transcript.toolOutput.length > 10, transcript.toolOutput.slice(0, 120));
 
+		// ------------------------------------------------------ tool grouping
+
+		process.stdout.write("\ntool grouping\n");
+
+		const grouped = await client.evaluate(`(() => {
+			const group = document.querySelector(".tool-group");
+			return {
+				present: !!group,
+				folded: group ? !group.classList.contains("open") : null,
+				bodyHidden: group ? group.querySelector(".tool-group-body").offsetHeight === 0 : null,
+				count: group?.querySelector(".tool-group-count")?.textContent ?? "",
+				label: group?.querySelector(".tool-group-label")?.textContent ?? "",
+				inside: group ? group.querySelectorAll(".tool").length : 0,
+			};
+		})()`);
+		check("consecutive tool calls form a group", grouped.present === true);
+		check("the group holds both calls", grouped.inside === 2, String(grouped.inside));
+		// Folded once the turn ends, so a long run does not push the conversation
+		// off the screen — which is the whole point of grouping.
+		check("a finished group is folded", grouped.folded === true, String(grouped.folded));
+		check("the folded body is hidden", grouped.bodyHidden === true, String(grouped.bodyHidden));
+		check("the group counts its calls", grouped.count.includes("2"), grouped.count);
+		check("the group names its tools", grouped.label.length > 0, grouped.label);
+
+		const groupOpened = await client.evaluate(`(() => {
+			document.querySelector(".tool-group-head").click();
+			const group = document.querySelector(".tool-group");
+			return {
+				open: group.classList.contains("open"),
+				bodyVisible: group.querySelector(".tool-group-body").offsetHeight > 0,
+				toolsInside: group.querySelectorAll(".tool").length,
+			};
+		})()`);
+		check("clicking the group opens it", groupOpened.open === true, String(groupOpened.open));
+		check("opening reveals the tool rows", groupOpened.bodyVisible === true, String(groupOpened.bodyVisible));
+		check("both calls are still in the document", groupOpened.toolsInside === 2, String(groupOpened.toolsInside));
+
 		process.stdout.write("\ntool disclosure\n");
 		check("tool output starts collapsed", transcript.toolOpen === false, String(transcript.toolOpen));
 		check("collapsed output is not visible", transcript.toolBodyVisible === false, String(transcript.toolBodyVisible));
 
+		// The group was folded by the end of the turn, so reaching a tool row
+		// means opening the group first. The check does what a user does rather
+		// than clicking something that is not on screen.
 		const expanded = await client.evaluate(`(() => {
+			document.querySelector(".tool-group:not(.open) .tool-group-head")?.click();
 			document.querySelector(".tool-head").click();
 			const tool = document.querySelector(".tool");
 			const body = document.querySelector(".tool-body");
@@ -463,7 +504,10 @@ async function main() {
 		check("user message came back", restored.userText.includes("你好"), restored.userText);
 		check("assistant text came back", restored.assistantText.includes("脚本化运行"), restored.assistantText.slice(0, 120));
 		check("closing text came back", restored.assistantText.includes("工具执行完毕"), restored.assistantText.slice(0, 200));
-		check("tool call came back", restored.toolCount === 1, String(restored.toolCount));
+		// `>= 1` rather than an exact count: what is being checked is that the
+		// calls survived the restart, and the number of them is the scripted
+		// run's business, not this assertion's.
+		check("tool call came back", restored.toolCount >= 1, String(restored.toolCount));
 		check("tool call kept its name", restored.toolName === "current_time", restored.toolName);
 		check("tool call kept its outcome", restored.toolState === "完成", restored.toolState);
 		check("tool output survived the restart", restored.toolOutput.length > 10, restored.toolOutput.slice(0, 120));
