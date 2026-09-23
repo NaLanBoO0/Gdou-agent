@@ -10,7 +10,7 @@
  * Run: npm run smoke
  */
 
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
@@ -34,6 +34,7 @@ import { FileCredentialStore, providerCredentials, removeApiKey, setApiKey } fro
 import { translate } from "../src/kernel/events.ts";
 import { type FallbackReport, withModelFallback } from "../src/kernel/fallback.ts";
 import { callKey, LoopGuard, loopBlockReason } from "../src/kernel/loop-guard.ts";
+import { appLogPath, logLine, writeCrashRecord } from "../src/kernel/observability.ts";
 import {
 	evaluateToolCall,
 	type PermissionContext,
@@ -47,6 +48,7 @@ import { BUILTIN_MODES } from "../src/profiles/builtin.ts";
 import { withEnvironment } from "../src/profiles/loader.ts";
 import { getProfile, loadProfiles, registerProfile, requireProfile } from "../src/profiles/registry.ts";
 import { resolveTool, TOOL_FACTORIES } from "../src/profiles/tool-catalog.ts";
+import { getSkill, listSkills, loadSkills, readSkillReference } from "../src/skills/registry.ts";
 import { currentTimeTool } from "../src/tools/time.ts";
 import { listNotesTool, saveNoteTool } from "../src/tools/notes.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange, targetExists } from "../src/kernel/changes.ts";
@@ -262,8 +264,17 @@ async function checkExperts(): Promise<void> {
 		session.recipe.mode === "coding" && session.recipe.expert === "security-audit",
 		JSON.stringify(session.recipe),
 	);
-	check("a session exposes the narrowed tools", session.tools.length === 4, `${session.tools.length} tools`);
-	check("the agent itself got the narrowed tools", session.agent.state.tools.length === 4);
+	// `load_skill` rides along with every session's tools, so the count is the
+	// narrowed four plus it — the meaningful assertion is that the *mode* tools
+	// were narrowed to exactly what the expert asked for, not the total.
+	const sessionToolNames = session.tools.map((t) => t.name);
+	check(
+		"a session exposes the narrowed tools",
+		sessionToolNames.filter((n) => n !== "load_skill").join(",") === "read,grep,find,ls",
+		sessionToolNames.join(","),
+	);
+	check("the agent itself got the narrowed tools", session.agent.state.tools.some((t) => t.name === "load_skill"));
+	check("load_skill is not subject to narrowing", sessionToolNames.includes("load_skill"));
 	check("a session exposes the resolved expert", session.expert?.id === "security-audit");
 	check("the methodology reached the system prompt", session.agent.state.systemPrompt.includes("安全审计员"));
 	session.dispose();
@@ -345,6 +356,73 @@ async function checkExperts(): Promise<void> {
 	} finally {
 		rmSync(sandbox, { recursive: true, force: true });
 	}
+}
+
+async function checkSkills(): Promise<void> {
+	console.log("\nSkills");
+
+	// ---- parsing --------------------------------------------------------
+	const builtins = listSkills(process.cwd());
+	check("built-in skills load", builtins.length === 2, builtins.map((s) => s.id).join(", "));
+	check("every skill has a description", builtins.every((s) => s.description.length > 0));
+	check("every skill has a body", builtins.every((s) => s.body.length > 0));
+
+	const commit = getSkill("git-commit", process.cwd());
+	check("when_to_use parses", commit.whenToUse.length > 0, commit.whenToUse);
+	check("the body excludes the frontmatter", !commit.body.includes("when_to_use"));
+
+	// ---- progressive disclosure ----------------------------------------
+	// The whole point: the prompt carries names and summaries, never bodies.
+	const modePrompt = "do the task";
+	const composed = composePrompt(modePrompt, undefined, builtins);
+	check("the catalog names each skill", builtins.every((s) => composed.includes(s.id)));
+	check("the catalog does not leak a body", !composed.includes(commit.body.slice(0, 20)));
+
+	// ---- file-backed skill, project-level ------------------------------
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-skill-"));
+	try {
+		const dir = join(sandbox, ".gdou-agent", "skills", "translate", "references");
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(
+			join(sandbox, ".gdou-agent", "skills", "translate", "SKILL.md"),
+			"---\nname: 翻译\ndescription: 翻译文字\nwhen_to_use: 用户要翻译\n---\n\n翻译正文。\n",
+			"utf-8",
+		);
+		writeFileSync(join(dir, "glossary.md"), "# 术语\n\n- API = 接口\n", "utf-8");
+
+		const catalog = loadSkills(sandbox);
+		check("a project skill joins the catalog", catalog.skills.some((s) => s.id === "translate"), catalog.skills.map((s) => s.id).join(","));
+
+		const translate = getSkill("translate", sandbox);
+		check("the project skill parses its body", translate.body.includes("翻译正文"));
+		check("its reference is listed", translate.references.map((r) => r.name).join(",") === "glossary.md");
+		check("the reference reads back", readSkillReference(translate, sandbox, "glossary.md").includes("API"));
+
+		// Unknown id and unknown reference both report the list, not just "no".
+		let unknownId = "";
+		try { getSkill("nope", sandbox); } catch (error) { unknownId = (error as Error).message; }
+		check("an unknown skill names the available ones", unknownId.includes("git-commit") && unknownId.includes("translate"), unknownId.slice(0, 80));
+
+		let unknownRef = "";
+		try { readSkillReference(translate, sandbox, "nope.md"); } catch (error) { unknownRef = (error as Error).message; }
+		check("an unknown reference names the available ones", unknownRef.includes("glossary.md"), unknownRef.slice(0, 80));
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+
+	// ---- assembly -------------------------------------------------------
+	const faux = fauxProvider();
+	faux.setResponses([fauxAssistantMessage(fauxText("ok"))]);
+	const models = createModels();
+	models.setProvider(faux.provider);
+	const scripted = faux.getModel();
+	const streamFn: StreamFn = (_model, context, options) => models.streamSimple(scripted, context, options);
+
+	const session = await createAgent({ recipe: { mode: "general" }, model: "deepseek/deepseek-flash", streamFn, settings: {}, cwd: process.cwd() });
+	check("load_skill is in the session's tools", session.tools.some((t) => t.name === "load_skill"));
+	check("the session reports its skills", session.skills.length >= 2);
+	check("no skill errors on a clean catalog", session.skillErrors.length === 0);
+	session.dispose();
 }
 
 /**
@@ -1476,6 +1554,45 @@ async function checkCredentials(): Promise<void> {
 	}
 }
 
+async function checkObservability(): Promise<void> {
+	console.log("\nObservability");
+	// Writes to an explicit throwaway directory (the test seam on every write
+	// function), so this asserts on real output without touching the user's log
+	// directory — and so a failure here cannot clutter it.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-obs-"));
+	const logDir = join(sandbox, "logs");
+
+	try {
+		logLine("one-time event", undefined, logDir);
+		logLine("repeating", "repeat-fingerprint", logDir);
+		logLine("repeating", "repeat-fingerprint", logDir);
+		logLine("repeating", "repeat-fingerprint", logDir);
+
+		const log = readFileSync(appLogPath(logDir), "utf-8");
+		check("the log file is created", log.length > 0);
+		check("an un-fingerprinted line is written", log.includes("one-time event"));
+		// The repeated line is written once, then only counted — so it appears
+		// exactly once in the text even though it was logged three times.
+		check(
+			"a repeated line is written once, not three times",
+			log.split("\n").filter((line) => line.includes("repeating")).length === 1,
+			`${log.split("\n").filter((line) => line.includes("repeating")).length} occurrence(s)`,
+		);
+
+		writeCrashRecord("test", new Error("boom"), logDir);
+		// Crash files are timestamped and individual; assert via the directory
+		// rather than a guessed filename.
+		const crashNames = readdirSync(logDir).filter((name) => name.startsWith("crash-"));
+		check("a crash record is written", crashNames.length === 1, `${crashNames.length} file(s)`);
+		check(
+			"the crash record carries the message",
+			readFileSync(join(logDir, crashNames[0] ?? ""), "utf-8").includes("boom"),
+		);
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
 async function main(): Promise<void> {
 	console.log("Module resolution");
 	check("pi-ai import resolves", typeof createModels === "function");
@@ -1494,6 +1611,7 @@ async function main(): Promise<void> {
 	await checkModeModel();
 	await checkCredentials();
 	await checkExperts();
+	await checkSkills();
 	await checkPermissions();
 	await checkPresentFiles();
 	checkWeb();
@@ -1702,6 +1820,7 @@ async function main(): Promise<void> {
 
 	await checkLoopGuard();
 	await checkModelFallback();
+	await checkObservability();
 
 	console.log("\nSettings and credentials");
 	const settings = loadSettings();

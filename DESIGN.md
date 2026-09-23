@@ -15,7 +15,7 @@
 | 模式 | **已完成** | `src/profiles/`，`general` / `coding`；已经是 markdown 数据，用户可自行加（见 `FEATURES.md` 2.31） |
 | 组合模型 | **已完成** | `src/kernel/recipe.ts`，见 `FEATURES.md` 2.23 |
 | 专家 | **已完成** | `src/experts/`，三级加载，只能收窄工具集 |
-| skills | 待做 | 挂在本页的组合模型上；按你的决定：只允许说明和资源 |
+| skills | **已完成** | `src/skills/`，三级加载（目录 + `SKILL.md` + `references/`），`load_skill` 按需读正文，见 `FEATURES.md` 2.36 |
 | 自动化 | 待做 | 复用配方；按你的决定：只做运行时触发，产出单独一个概念 |
 
 第 9 节那四个问题**已经拍板**，答案记在下面各节里。**组合模型已经落地，所以本页第 3 节不再是建议而是既成事实**——skills 和自动化要按它的形状来挂，不要再另起一套。
@@ -141,6 +141,9 @@ thinkingLevel: high                   # 可选
 
 ## 5. skills
 
+> **已落地（2026-09-23）**，见 `FEATURES.md 2.36`。下面保留设计原文，实现与它的差异
+> 记在文末「实现与设计的差异」。
+
 **是什么**：一份可以按需加载的说明，外加它需要的资源文件。
 
 **存哪**：目录形式，因为 skill 往往不止一个文件。
@@ -178,6 +181,19 @@ description: 把本周的提交整理成周报。当用户要求写周报或总�
 
 **一个限制**：skill 的资源和脚本依赖文件工具。`general` 模式没有文件访问，所以只能使用
 纯说明型的 skill。这是对的——能力边界不该被 skill 绕过。
+
+**实现与设计的差异（2026-09-23 落地时）**：
+
+1. **只做了 `load_skill`，没做 `list_skills`。** 目录（名字 + 描述）直接进系统提示，
+   不随 skill 数量增长到需要单独一个工具的程度。真到几十个技能、提示开始变长的那天，
+   再加 `list_skills` 也只是一次增量。
+2. **reference 通过 `load_skill` 的 `reference` 参数读，不是「用 read 工具读目录」。**
+   设计里写「用已有的 read 工具去读」，但那会绕过权限门——`read` 是受路径约束的，
+   而 skill 的正文应该是「读一段指令」，不该要求 session 有文件访问权。让 `load_skill`
+   直接从 registry 读，`general` 模式（无文件工具）也能用带 references 的 skill。
+3. **加了 `when_to_use` 字段**，把「路由提示」从 description 里拆出来。description 是
+   「这是什么」，`when_to_use` 是「什么时候用」——两者分开，description 才不会被
+   触发词挤占。
 
 ---
 

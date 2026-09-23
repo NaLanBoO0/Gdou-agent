@@ -162,6 +162,8 @@ const state = {
 	artifacts: [],
 	/** The last experts catalog, for the paths card on the experts page. */
 	expertCatalog: null,
+	/** The last skills catalog, for the paths card on the skills page. */
+	skillCatalog: null,
 	/**
 	 * Last credential rows read from the main process.
 	 *
@@ -171,6 +173,8 @@ const state = {
 	 */
 	credentials: [],
 	inspectorVisible: true,
+	/** Number of user turns rendered, so each turn gets a stable ordinal. */
+	turnCount: 0,
 };
 
 // --------------------------------------------------------------- transcript
@@ -292,13 +296,93 @@ function clearTranscript() {
 	}
 	state.assistant = null;
 	state.tools.clear();
+	state.turnCount = 0;
 	setEmptyVisible(true);
+	syncTurnDots();
+}
+
+/* ---------------------------------------------------------- turn dots */
+
+/**
+ * Rebuild the turn-dot rail from the user messages in the transcript.
+ *
+ * One dot per `.msg-user`, in order. A single turn is not enough to navigate, so
+ * the rail stays hidden until there are two — which is also when "where am I"
+ * first becomes a question worth answering.
+ */
+function syncTurnDots() {
+	const wrap = byId("turn-dots");
+	const scroll = byId("turn-dot-scroll");
+	const turns = transcriptEl.querySelectorAll(".msg-user");
+
+	if (turns.length < 2) {
+		wrap.hidden = true;
+		scroll.replaceChildren();
+		return;
+	}
+	wrap.hidden = false;
+
+	const dots = [...turns].map((msg) => {
+		const dot = element("button", "turn-dot");
+		dot.type = "button";
+		dot.dataset.turn = msg.dataset.turn;
+		dot.setAttribute("role", "tab");
+		dot.setAttribute("aria-label", `第 ${msg.dataset.turn} 轮`);
+		dot.addEventListener("click", () => msg.scrollIntoView({ behavior: "smooth", block: "start" }));
+		dot.addEventListener("mouseenter", (event) => showTurnBubble(msg, dot, event));
+		dot.addEventListener("mouseleave", hideTurnBubble);
+		return dot;
+	});
+
+	scroll.replaceChildren(...dots);
+	updateTurnActive();
+}
+
+/**
+ * The dot that is "current" is the user message closest to the top of the
+ * viewport — the turn the reader is reading right now, not the newest.
+ */
+function updateTurnActive() {
+	const wrap = byId("turn-dots");
+	if (wrap.hidden) return;
+	const turns = transcriptEl.querySelectorAll(".msg-user");
+	if (!turns.length) return;
+
+	const top = stream.getBoundingClientRect().top + 8;
+	let current = turns[0];
+	let best = Infinity;
+	for (const msg of turns) {
+		const distance = Math.abs(msg.getBoundingClientRect().top - top);
+		if (distance < best) {
+			best = distance;
+			current = msg;
+		}
+	}
+
+	for (const dot of byId("turn-dot-scroll").querySelectorAll(".turn-dot")) {
+		dot.classList.toggle("active", dot.dataset.turn === current.dataset.turn);
+	}
+}
+
+function showTurnBubble(msg, dot, event) {
+	const bubble = byId("turn-dot-bubble");
+	bubble.textContent = msg.querySelector(".body")?.textContent?.slice(0, 40) ?? `第 ${msg.dataset.turn} 轮`;
+	bubble.hidden = false;
+	const rect = dot.getBoundingClientRect();
+	bubble.style.top = `${rect.top + rect.height / 2}px`;
+	bubble.style.left = `${rect.left}px`;
+}
+
+function hideTurnBubble() {
+	byId("turn-dot-bubble").hidden = true;
 }
 
 function addUserMessage(text) {
 	const wrapper = element("div", "msg msg-user");
+	wrapper.dataset.turn = String(++state.turnCount);
 	wrapper.append(element("div", "body", text));
 	append(wrapper);
+	syncTurnDots();
 }
 
 function addError(text) {
@@ -604,6 +688,14 @@ function setStatusLine() {
 	const mode = session.scripted ? " · 脚本化运行" : "";
 	const expert = session.expert ? ` · ${session.expert.label}` : "";
 
+	// Whether the agent can reach the network at all is a property of the tool
+	// set, not the model — so it is read off the resolved tools, and shown next to
+	// the count rather than guessed from the provider. "离线" is the honest word
+	// for "no web_search/web_fetch in this mode", which is the state the reader
+	// actually wants to distinguish from "it can look things up".
+	const canBrowse = (session.tools ?? []).some((name) => name === "web_search" || name === "web_fetch");
+	const online = session.scripted ? "" : canBrowse ? " · 联网" : " · 离线";
+
 	// Shown only once the model stops seeing everything. An indicator that is
 	// always present becomes furniture, and furniture stops being read — so it
 	// stays out of the way until it has something to say.
@@ -616,7 +708,7 @@ function setStatusLine() {
 	// notice the kernel raises mid-run tells them it happened, not that it could.
 	const backup = session.fallback ? ` ⇄ ${session.fallback.provider}/${session.fallback.id}` : "";
 
-	text.textContent = `${session.profile.id}${expert} · ${session.model.provider}/${session.model.id}${backup} · ${session.toolCount} 个工具${mode}${pruned}`;
+	text.textContent = `${session.profile.id}${expert} · ${session.model.provider}/${session.model.id}${backup} · ${session.toolCount} 个工具${online}${mode}${pruned}`;
 	cwd.textContent = session.cwd;
 	cwd.disabled = false;
 
@@ -818,14 +910,21 @@ byId("abort").addEventListener("click", () => {
 
 byId("profile").addEventListener("change", (event) => {
 	// The expert carries over: changing the mode is not a request to drop it.
-	void startSession(event.target.value, state.expertId);
+	// A fresh conversation, the same as a launch: switching mode is a deliberate
+	// move to a different capability, not a request to drag the previous
+	// conversation of that mode back onto the screen. History stays one click
+	// away in the list.
+	void startSession(event.target.value, state.expertId, { fresh: true });
 });
 
 byId("expert").addEventListener("change", (event) => {
 	if (state.running || !state.profileId) return;
 	// The empty option is "no expert", which has to be sent as null rather than
-	// omitted — omitting it would let the stored default come back.
-	void startSession(state.profileId, event.target.value === "" ? null : event.target.value);
+	// omitted — omitting it would let the stored default come back. A fresh
+	// conversation for the same reason as switching mode: the expert shapes the
+	// prompt and the tools, so resuming a transcript written under a different
+	// one would restore something this recipe never produced.
+	void startSession(state.profileId, event.target.value === "" ? null : event.target.value, { fresh: true });
 });
 
 function beginNewChat() {
@@ -836,6 +935,7 @@ function beginNewChat() {
 
 byId("new-chat").addEventListener("click", beginNewChat);
 byId("new-chat-inline").addEventListener("click", beginNewChat);
+byId("new-chat-sidebar").addEventListener("click", beginNewChat);
 
 byId("cwd").addEventListener("click", async () => {
 	if (state.running) return;
@@ -1263,6 +1363,7 @@ function setView(view) {
 	}
 
 	if (view === "experts") void refreshExperts();
+	if (view === "skills") void refreshSkills();
 	if (view === "settings") void refreshCredentials();
 	if (view === "diagnostics") void loadDiagnostics();
 }
@@ -1301,7 +1402,10 @@ function renderModeSwitch(profiles) {
 			button.title = profile.description;
 			button.addEventListener("click", () => {
 				if (state.running || profile.id === state.profileId) return;
-				void startSession(profile.id, state.expertId);
+				// A fresh conversation, the same as a launch and as the picker:
+				// switching mode moves to a different capability, not back into
+				// the previous conversation of that mode.
+				void startSession(profile.id, state.expertId, { fresh: true });
 			});
 			return button;
 		}),
@@ -1403,6 +1507,73 @@ async function refreshExperts() {
 }
 
 byId("experts-refresh").addEventListener("click", () => void refreshExperts());
+
+/* ---------------------------------------------------------------- skills */
+
+function renderSkills(target, catalog) {
+	const cards = catalog.skills.map((skill) => {
+		const card = element("div", "expert-card");
+
+		const head = element("div", "expert-card__head");
+		head.append(icon(["M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5ZM20 5.5A1.5 1.5 0 0 0 18.5 4H14v16h4.5a1.5 1.5 0 0 0 1.5-1.5Z"], 16), element("b", null, skill.label));
+		head.append(element("span", "expert-card__id", skill.id));
+		card.append(head);
+
+		card.append(element("p", null, skill.description));
+
+		const foot = element("div", "expert-card__foot");
+		if (skill.whenToUse) foot.append(element("span", "tool-chip", `触发：${skill.whenToUse}`));
+		if (skill.references && skill.references.length > 0) {
+			foot.append(element("span", "tool-chip", `refs: ${skill.references.join(", ")}`));
+		} else {
+			foot.append(element("span", "tool-chip tool-chip--none", "无参考文件"));
+		}
+		card.append(foot);
+
+		return card;
+	});
+
+	if (cards.length === 0) {
+		target.replaceChildren(element("p", "inspector-empty", "（没有技能）"));
+	} else {
+		target.replaceChildren(...cards);
+	}
+}
+
+/** Where the loader looks, so "where do I put my own skill" has an answer. */
+function renderSkillPaths() {
+	const box = byId("skill-paths");
+	box.replaceChildren();
+	const paths = state.skillCatalog?.paths ?? [];
+	if (paths.length === 0) return;
+
+	const card = element("div", "planned-card");
+	card.append(icon(["M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5ZM20 5.5A1.5 1.5 0 0 0 18.5 4H14v16h4.5a1.5 1.5 0 0 0 1.5-1.5Z"], 18));
+	const inner = element("div");
+	inner.append(
+		element("h2", null, "自己写一个"),
+		element("p", null, "一个目录，里面放 SKILL.md（frontmatter 放元数据，正文是方法论），可选的 references/ 放参考文件。同名时项目级优先。"),
+	);
+	const pre = element("pre", "tool-body");
+	pre.style.display = "block";
+	pre.textContent = paths.join("\n");
+	inner.append(pre);
+	card.append(inner);
+	box.append(card);
+}
+
+async function refreshSkills() {
+	try {
+		const catalog = await window.gdou.skills();
+		state.skillCatalog = catalog;
+		renderSkills(byId("skills"), catalog);
+		renderSkillPaths();
+	} catch (error) {
+		byId("skills").replaceChildren(element("p", "inspector-empty", `无法读取技能列表：${error.message}`));
+	}
+}
+
+byId("skills-refresh").addEventListener("click", () => void refreshSkills());
 
 /** Reflect the running recipe in the two pickers. */
 function syncPickers() {
@@ -1925,6 +2096,7 @@ async function loadDiagnostics() {
 		["项目根", probe.paths.projectRoot],
 		["pi 源码", probe.paths.piSource],
 		["状态目录", probe.paths.agentHome],
+		["日志目录", probe.paths.logsDir],
 		["工具目录", probe.paths.toolBinDir],
 		["esbuild 打包", ...yesNo(probe.paths.bundled)],
 		["app.isPackaged", ...yesNo(probe.paths.packaged)],
@@ -2009,6 +2181,59 @@ function wireNavToggle() {
 		// The transition is only wanted for this toggle; leaving it on would also
 		// animate window resizes, where it reads as lag.
 		setTimeout(() => shell.classList.remove("sidebar-animating"), 220);
+	});
+}
+
+/* ---------------------------------------------------------- sidebar resize */
+
+const SIDEBAR_MIN = 180;
+const SIDEBAR_MAX = 420;
+const SIDEBAR_KEY = "gdou.sidebarWidth";
+
+function applySidebarWidth(width) {
+	const shell = byId("shell");
+	shell.style.setProperty("--sidebar-w", `${width}px`);
+}
+
+function readSidebarWidth() {
+	const stored = Number(localStorage.getItem(SIDEBAR_KEY));
+	if (Number.isFinite(stored) && stored >= SIDEBAR_MIN && stored <= SIDEBAR_MAX) return stored;
+	return 240;
+}
+
+/**
+ * Draggable sidebar. The grid tracks `--sidebar-w`, so the drag only writes one
+ * CSS variable; the resizer's `left` follows it through the same variable, which
+ * is why the two can never disagree. The width is persisted so the next launch
+ * opens at the size the user left it at.
+ */
+function wireSidebarResizer() {
+	const shell = byId("shell");
+	const resizer = byId("sidebar-resizer");
+
+	applySidebarWidth(readSidebarWidth());
+
+	resizer.addEventListener("pointerdown", (event) => {
+		if (shell.classList.contains("sidebar-collapsed")) return;
+		event.preventDefault();
+		resizer.setPointerCapture(event.pointerId);
+		resizer.classList.add("dragging");
+
+		const onMove = (moveEvent) => {
+			const width = Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, moveEvent.clientX));
+			applySidebarWidth(width);
+		};
+		const onUp = () => {
+			resizer.classList.remove("dragging");
+			resizer.removeEventListener("pointermove", onMove);
+			resizer.removeEventListener("pointerup", onUp);
+			const width = readSidebarWidth();
+			// Persist the value that is currently applied, not the last stored one.
+			const applied = Number.parseFloat(getComputedStyle(shell).getPropertyValue("--sidebar-w"));
+			if (Number.isFinite(applied)) localStorage.setItem(SIDEBAR_KEY, String(Math.round(applied)));
+		};
+		resizer.addEventListener("pointermove", onMove);
+		resizer.addEventListener("pointerup", onUp);
 	});
 }
 
@@ -2132,9 +2357,14 @@ async function boot() {
 
 	wireWindowControls();
 	wireNavToggle();
+	wireSidebarResizer();
 	wireMenuBar();
 	wireInspectorDivider();
 	setInspectorVisible(true);
+
+	// The active turn dot tracks scroll, so it has to follow the reader. Passive
+	// so it never competes with the browser's own scrolling.
+	stream.addEventListener("scroll", updateTurnActive, { passive: true });
 
 	let profiles;
 	try {

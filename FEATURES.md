@@ -70,6 +70,9 @@
 | 39 | **按模式选模型** | `profiles/types.ts`、`profiles/loader.ts`、`kernel/agent.ts` | 模式文件的 `model:` 是**最低优先级**建议（选项 > 设置 > 模式）；未知 spec 在会话启动时报错并点名模式与文件 |
 | 40 | **模型与凭据** | `kernel/credentials.ts`、`kernel/runtime.ts`、`electron/main.ts`、`renderer/` | 界面里存 API key（`~/.gdou-agent/auth.json`，pi 的格式）；存的 key **压过**环境变量；key **永不跨 IPC** 回渲染层，只有掩码；编写器里模型名变成切换按钮，弹层按服务商分组列模型 |
 | 41 | **启动即新对话 + 修掉模型切不动** | `electron/main.ts`、`renderer/app.js`、`kernel/agent.ts` | 两处：① 桌面版 `startSession` 重建会话时**漏传了 `settings`**，`agent:setModel` 把选择写盘后、重建时内核读的是模式默认而非刚选的值——于是「切模型没反应」，而且 `thinkingLevel`/`permission`/`fallback`/`loopGuard` 全部随之失效（CLI 一直正确传了 `loadSettings()`，只有 Electron 漏了）；② 启动默认进**新对话**而非恢复最近一条，历史在左下角一处点击即可 |
+| 42 | **技能渐进式披露** | `skills/types.ts`、`skills/registry.ts`、`skills/builtin.ts`、`tools/load-skill.ts`、`kernel/agent.ts`、`kernel/recipe.ts` | 技能是「目录 + `SKILL.md` + 可选 `references/`」，三级加载（内置/用户/项目）。会话开始时提示里只有**名字+描述+when_to_use**，正文不注入；模型判断任务匹配后调 `load_skill` 读正文（可附带读一个 reference 文件）。这是三个自定义机制里**唯一真正新的**——几十个技能全文塞进提示就是几十万 token，正好把上下文裁剪省下的预算又花回去 |
+| 43 | **GUI 质感改造** | `renderer/tokens.css`、`renderer/shell.css`、`renderer/chat.css`、`renderer/index.html`、`renderer/app.js` | 侧栏加品牌区（logo 标识 + Beta 徽章）与醒目的**新建对话**主按钮；侧栏**可拖拽调宽**（180–420px，走 `--sidebar-w` CSS 变量，宽度持久化到 localStorage）；对话时间线右侧加**轮次圆点导航**（一点跳转、hover 气泡、上下渐隐遮罩、active 跟随滚动）；补阴影层次 token |
+| 44 | **观测（崩溃/日志/内存）** | `kernel/observability.ts`、`electron/main.ts`、`src/paths.ts` | 三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`：① **崩溃报告**——`uncaughtException`/`unhandledRejection`/`render-process-gone` 同步落盘（异步会丢），单次启动上限 50 条；② **运行日志**——会话启动/模型解析写一行，指纹采样防日志风暴；③ **内存诊断**——heap ≥1.5GB 时写 `process.report`。诊断页加「日志目录」行 |
 
 ---
 
@@ -1242,6 +1245,108 @@ fatal: Mode "broken" names a model that does not exist: deepseek/depseek-flash
 逐字节未改**、粘贴的 key 被 trim、存储压过环境变量。
 
 `check:gui` 也补了设置页与模型菜单一节（见 2.35 的三个坑，第 2 条就是被这节自己抓出来的）。
+
+---
+
+### 2.36 技能渐进式披露（`load_skill`）
+
+技能是三个自定义机制里**唯一真正新的一个**。专家（E5）和模式（F1/F2）都只是「把
+一段提示词按优先级组合进会话」，技能的不同在于**它的正文默认不在上下文里**。
+
+**问题**：技能会越来越多。一个 `skills/` 目录里有几十个技能是常态，每个技能的正文
+是一页方法论。把它们全文拼进系统提示，就是几十万 token 的固定开销——正好把 2.19
+上下文裁剪好不容易省下来的预算又花回去，而且是**每一轮都花**。
+
+**解法（渐进式披露）**：
+
+- 会话开始时，提示里只注入一份**目录**：每个技能的 `id` + 一句话 `description` +
+  可选的 `when_to_use`。这几十行就够模型判断「该用哪个」。
+- 模型判断任务匹配后，调 `load_skill` 工具，正文**在这一刻**才进入上下文。
+- `load_skill` 还能附带读一个 `references/` 文件，所以技能的主干（SKILL.md）保持简短，
+  细节按需加载。
+
+**技能是一个目录，不是单文件**——因为一个技能可能带参考材料。`SKILL.md` 是主干
+（frontmatter: `name` / `description` / `when_to_use` + 正文方法论），`references/` 放
+可选文件（`*.note` 文件给它的邻居写一行描述，让模型决定要不要读）。
+
+**两个安全/一致性的判断**：
+
+1. **`load_skill` 从 registry 读，不是从文件系统直接读。** 一个损坏的 `SKILL.md`
+   被 registry 拒绝加载后，不能通过 `load_skill` 走后门读到；未知 id 的报错会列出
+   所有存在的技能——这是「我不懂怎么做」和「文件坏了」的区别。
+2. **`load_skill` 不受专家收窄，也不受模式工具集约束。** 它跟在每个会话的工具集里，
+   因为「读一段指令」不是一种「能力」——专家收窄工具集是在收窄**能做什么**，
+   读指令不在那个范畴。它没有路径参数，所以权限门的「按参数形状分类」会把它
+   归为「无面可保护」直接放行，和 `current_time` 一样。
+
+**内置了两个技能**（`git-commit`、`write-readme`），主要作用是**证明机制工作** +
+覆盖两个大家都做的事。真正的技能库由用户文件构成。
+
+验证：`smoke` 新增 17 条（305 → 322），覆盖解析、三级加载、reference 读取、
+**渐进式披露不泄露正文**（断言 `composePrompt` 输出里没有 skill body 的前 20 字）、
+以及 `load_skill` 工具注入会话。CLI 加 `--list-skills`。
+
+**Skills 页（GUI）也在同日从占位卡换成真实列表**：`agent:skills` IPC + preload +
+`renderSkills`，把每个技能的 id / 描述 / `when_to_use` / references / 来源渲染成卡片，
+下面照专家页的样子附一张「自己写一个」的路径卡（项目级 > 用户级）。机制先有、界面后接，
+所以这一页是「把已经完成的能力暴露给用户」而不是新机制。
+
+---
+
+### 2.37 GUI 质感（侧栏品牌区、可拖拽宽度、轮次圆点）
+
+对照 SztuCode 的桌面端，把「精致感」缺的几块补上。**配色 token 本来就是冷灰中性**
+（`#f7f9fa` 底 + `#3383e8` 蓝强调，`tokens.css` 注释里写着「ported from SztuCode」），
+所以这次不动配色，动的是**布局和动效**——那才是「老土」的来源。
+
+1. **侧栏品牌区**：顶部加 logo 标识 + `GDOU` 名 + `Beta` 徽章，再往下是一枚**贯穿的
+   「新建对话」主按钮**。之前「新建」只是对话记录标题旁的一个小加号，第一动作被藏进了
+   二级位置。
+2. **侧栏可拖拽调宽**：加 `sidebar-resizer`，`pointerdown` 拖动，宽度走 `--sidebar-w`
+   这一个 CSS 变量（grid 和分隔条共用，所以两者永不会对不上）；180–420px 夹取，
+   持久化到 `localStorage`，下次启动沿用。
+3. **轮次圆点导航**：时间线右侧一列圆点，每个用户消息一轮。点圆点平滑跳到那一轮，
+   hover 出气泡（预览该轮文字）、上下渐隐遮罩；active 圆点跟随滚动——表示的是
+   「正在读的这一轮」而不是「最新一轮」。不足两轮时隐藏（没有导航的必要）。
+4. 补 `--shadow-float` 阴影层次。
+
+**两个实现细节**：圆点栏用 `position: absolute` 挂在 `.task-canvas` 上，所以给
+`.task-canvas` 补了 `position: relative`（否则会定位到更远的祖先）；气泡用
+`position: fixed` + `translate(-100%, -50%)` 挂在 viewport 上，因为它在
+`overflow: hidden` 的滚动容器里会被裁掉——和之前模型菜单「被挡住」是同一类坑。
+
+验证：`gui-check` 的侧栏断言（列全页面 / 初始展开 / 折叠切换）全通过；`renderer-check`
+补了品牌区、拖拽条、圆点导航的 7 条断言。离线校验（smoke 322 / typecheck / vendor /
+tui / tools）全绿。
+
+---
+
+### 2.38 观测（崩溃报告、日志落盘、内存诊断）
+
+三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`（跟随 `GDOU_AGENT_HOME`，
+所以自检用临时 home 时不会污染真实日志）。这是对齐清单里 N6/N7/N9——也是我们
+**一整天都在跟「Electron 渲染进程静默崩溃、拿不到任何线索」作对**的直接解药。
+
+1. **崩溃报告（N6）**：`uncaughtException` / `unhandledRejection` /
+   `render-process-gone` 三个处理器**同步落盘**。同步是硬要求——`uncaughtException`
+   是进程死前最后一段代码，异步 `fs.promises` 会排进事件循环然后一起丢。单次启动
+   上限 50 条，防「渲染进程崩溃→重生→再崩」的循环写满磁盘。每个处理器**自己吞异常**：
+   崩溃报告器再崩，就是一次没有记录的崩溃。
+2. **运行日志（N7）**：会话启动写一行（mode / expert / model / cwd / 是否脚本化），
+   这是「它到底跑在什么配置下」的权威答案。重复消息按**指纹采样**——第一条写全文，
+   之后只计数，每 100 次刷一行；否则一个循环就能写几 MB，而打不开的日志等于没有日志。
+3. **内存诊断（N9）**：每 30 秒看一次 `heapUsed`，≥1.5GiB 时写一份 `process.report`
+   的堆报告（V8 内置，无原生依赖），每分钟最多一份，防持续泄漏写满磁盘。
+
+诊断页的「路径」区加了一行「日志目录」，用户点开就能知道线索落在哪。
+
+**一个设计上的修正**：写函数都带一个 `dir` 参数（默认 `logsDir()`），这是**测试接缝**。
+第一版 smoke 靠「运行时改 `GDOU_AGENT_HOME`」来隔离，结果不生效——因为 `AGENT_HOME`
+是模块加载时冻结的常量。改成显式传目录后，自检既不会碰真实日志，断言也才真正测到
+了被测对象（第一版的前三条「通过」是假象，log 写到了真实 home）。
+
+验证：`smoke` 327（+5），覆盖「日志文件创建 / 未指纹行必写 / 重复行只写一次 /
+崩溃记录落盘 / 崩溃记录带消息」。
 
 ---
 

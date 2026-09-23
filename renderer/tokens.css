@@ -64,6 +64,7 @@
 	--shadow-card: 0 3px 10px rgb(24 34 46 / 4%);
 	--shadow-pop: 0 14px 36px rgb(18 24 32 / 16%), 0 3px 10px rgb(18 24 32 / 8%);
 	--shadow-menu: 0 8px 25px rgb(35 38 44 / 11%);
+	--shadow-float: 0 8px 24px rgb(18 24 32 / 12%), 0 2px 6px rgb(18 24 32 / 6%);
 
 	/* Metrics.
 	   Names here must match every `var()` use exactly. A typo does not fail
@@ -118,6 +119,7 @@
 	--shadow-card: 0 3px 10px rgb(0 0 0 / 26%);
 	--shadow-pop: 0 14px 36px rgb(0 0 0 / 46%), 0 3px 10px rgb(0 0 0 / 26%);
 	--shadow-menu: 0 8px 25px rgb(0 0 0 / 40%);
+	--shadow-float: 0 8px 24px rgb(0 0 0 / 46%), 0 2px 6px rgb(0 0 0 / 30%);
 }
 
 * {

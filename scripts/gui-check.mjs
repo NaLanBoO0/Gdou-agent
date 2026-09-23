@@ -1158,7 +1158,12 @@ async function main() {
 			warning: document.getElementById("expert-warning").textContent,
 		}))()`);
 		check("the status line names the expert", withExpert.status.includes("安全审计"), withExpert.status);
-		check("the expert narrowed the tool set to nothing", withExpert.status.includes("0 个工具"), withExpert.status);
+		// The expert narrows the *mode's* tools to none; the one remaining tool is
+		// `load_skill`, which is not part of any mode's set (reading instructions
+		// is not a capability an expert can subtract). So "1 个工具" is the honest
+		// total, and the narrowing is proven by the disclosure below rather than
+		// by counting to zero.
+		check("the expert narrowed the tool set to nothing", withExpert.status.includes("1 个工具"), withExpert.status);
 		check("the unavailable tools are disclosed", withExpert.warningHidden === false, String(withExpert.warningHidden));
 		check("the warning names the tools", withExpert.warning.includes("read"), withExpert.warning);
 

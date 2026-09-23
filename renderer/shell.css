@@ -12,7 +12,7 @@
 
 .sztu-shell {
 	display: grid;
-	grid-template: var(--titlebar-h) minmax(0, 1fr) / var(--sidebar-w) minmax(0, 1fr);
+	grid-template: var(--titlebar-h) minmax(0, 1fr) / var(--sidebar-w, 240px) minmax(0, 1fr);
 	height: 100%;
 	min-height: 0;
 	overflow: hidden;
@@ -22,6 +22,42 @@
 
 .sztu-shell.sidebar-collapsed {
 	grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* The draggable divider between sidebar and main. Positioned against the shell
+   rather than inside either column so it can span the full height and its
+   `left` tracks the sidebar width without being clipped by `overflow: hidden`. */
+.sidebar-resizer {
+	position: absolute;
+	z-index: 40;
+	top: var(--titlebar-h);
+	bottom: 0;
+	left: var(--sidebar-w, 240px);
+	width: 6px;
+	margin-left: -3px;
+	cursor: col-resize;
+	touch-action: none;
+}
+
+.sidebar-resizer::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	left: 50%;
+	width: 1px;
+	background: transparent;
+	transform: translateX(-50%);
+	transition: background-color var(--speed) var(--ease);
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer.dragging::after {
+	background: var(--accent);
+}
+
+.sidebar-collapsed .sidebar-resizer {
+	display: none;
 }
 
 /* Animated only while the user is toggling. Leaving the transition on would
@@ -227,6 +263,75 @@
 	overflow: hidden;
 	padding: 8px 8px 0;
 	background: var(--surface);
+}
+
+/* The brand row SztuCode's sidebar leads with. Kept out of the drag region and
+   small enough that it reads as chrome, not a heading competing with the nav. */
+.sidebar-brand {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	padding: 2px 8px 12px;
+	user-select: none;
+}
+
+.sidebar-brand__mark {
+	display: grid;
+	width: 22px;
+	height: 22px;
+	place-items: center;
+	color: #fff;
+	background: linear-gradient(140deg, #4a9dff, #6a5bff 55%, #2b6ce8);
+	border-radius: 6px;
+	font-size: 13px;
+	font-weight: 600;
+	line-height: 1;
+}
+
+.sidebar-brand__name {
+	color: var(--text-strong);
+	font-size: var(--text-lg);
+	font-weight: 600;
+	letter-spacing: -0.01em;
+}
+
+.sidebar-brand__badge {
+	padding: 1px 6px;
+	color: var(--text-faint);
+	background: var(--surface-soft);
+	border: 1px solid var(--border);
+	border-radius: 999px;
+	font-size: var(--text-xs);
+}
+
+/* The one always-visible call to action. SztuCode leads the sidebar with it,
+   and it is the first thing a new user reaches for; burying it as an inline "+"
+   inside a section label hides the primary action. */
+.new-task-button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 8px;
+	min-height: 38px;
+	width: 100%;
+	margin-bottom: 10px;
+	color: var(--text);
+	background: var(--surface-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: 10px;
+	font-size: var(--text-lg);
+	font-weight: 500;
+	box-shadow: 0 1px 2px rgb(0 0 0 / 4%);
+	transition: background-color var(--speed) var(--ease), border-color var(--speed) var(--ease), transform var(--speed) var(--ease);
+}
+
+.new-task-button:hover {
+	background: var(--surface-hover);
+	border-color: var(--border-strong);
+}
+
+.new-task-button:active {
+	transform: translateY(1px);
 }
 
 .mode-switch {

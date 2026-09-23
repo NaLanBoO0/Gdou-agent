@@ -43,6 +43,9 @@ contextBridge.exposeInMainWorld("gdou", {
 	 */
 	experts: () => ipcRenderer.invoke("agent:experts"),
 
+	/** Skills available for the current working directory. Resolves to `{ skills, paths }`. */
+	skills: () => ipcRenderer.invoke("agent:skills"),
+
 	/**
 	 * Credential rows, one per provider.
 	 *

@@ -63,6 +63,17 @@ export function settingsPath(): string {
 	return join(AGENT_HOME, "settings.json");
 }
 
+/**
+ * Where diagnostics land: crash reports, the running log, heap dumps.
+ *
+ * Kept under AGENT_HOME so a bundled run and a tsx run write to the same place,
+ * and so `GDOU_AGENT_HOME` (used by the GUI self-check to isolate state) also
+ * isolates the logs from the real user's.
+ */
+export function logsDir(): string {
+	return join(AGENT_HOME, "logs");
+}
+
 export function notesPath(): string {
 	return join(AGENT_HOME, "notes.json");
 }
@@ -85,6 +96,16 @@ export function expertsDir(): string {
  */
 export function projectExpertsDir(cwd: string): string {
 	return join(cwd, ".gdou-agent", "experts");
+}
+
+/** User-level skills: one directory per skill, each holding a `SKILL.md`. */
+export function skillsDir(): string {
+	return join(AGENT_HOME, "skills");
+}
+
+/** Project-level skills, resolved against a working directory. */
+export function projectSkillsDir(cwd: string): string {
+	return join(cwd, ".gdou-agent", "skills");
 }
 
 /** User-level modes: one markdown file per mode. */

@@ -121,6 +121,7 @@
 }
 
 .task-canvas {
+	position: relative;
 	display: flex;
 	flex-direction: column;
 	min-height: 0;
@@ -770,6 +771,13 @@
 	background: #a92318;
 }
 
+/* The abort button is toggled with the `hidden` attribute, but `.send` sets
+   `display: grid`, which beats the UA's `[hidden] { display: none }` — so without
+   this the red stop button shows even when idle. Same trap as `.model-menu`. */
+.send[hidden] {
+	display: none;
+}
+
 /* ------------------------------------------------------------ empty state */
 
 .empty {
@@ -983,4 +991,114 @@
 	color: var(--text-faint);
 	font-size: var(--text-md);
 	text-align: center;
+}
+
+/* ------------------------------------------------------- turn dot navigation */
+
+/* A vertical rail of dots on the right of the transcript, one per user turn.
+   It is the cheapest way to see "how far back am I" at a glance and to jump to
+   a turn without scrolling. Fixed width column beside the stream, shown only
+   once there is more than one turn. */
+.turn-dot-wrap {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	z-index: 5;
+	display: flex;
+	width: 26px;
+	align-items: center;
+	justify-content: center;
+	pointer-events: none;
+}
+
+.turn-dot-wrap[hidden] {
+	display: none;
+}
+
+.turn-dot-rail {
+	position: relative;
+	display: flex;
+	width: 100%;
+	height: 100%;
+	justify-content: center;
+	overflow: hidden;
+}
+
+.turn-dot-scroll {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 9px;
+	overflow-y: auto;
+	max-height: 100%;
+	padding: 12px 0;
+	pointer-events: auto;
+	scrollbar-width: none;
+}
+
+.turn-dot-scroll::-webkit-scrollbar {
+	display: none;
+}
+
+.turn-dot {
+	position: relative;
+	display: block;
+	flex: 0 0 auto;
+	width: 9px;
+	height: 9px;
+	padding: 0;
+	background: var(--border-strong);
+	border: 0;
+	border-radius: 50%;
+	cursor: pointer;
+	transition: background-color var(--speed) var(--ease), transform var(--speed) var(--ease), box-shadow var(--speed) var(--ease);
+}
+
+.turn-dot:hover {
+	background: var(--text-muted);
+	transform: scale(1.25);
+}
+
+.turn-dot.active {
+	background: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-soft);
+	transform: scale(1.15);
+}
+
+/* Soft fades top and bottom so the rail reads as continuous, not clipped. */
+.turn-dot-fade {
+	position: absolute;
+	left: 0;
+	right: 0;
+	height: 14px;
+	pointer-events: none;
+}
+
+.turn-dot-fade--top {
+	top: 0;
+	background: linear-gradient(var(--surface-raised), transparent);
+}
+
+.turn-dot-fade--bottom {
+	bottom: 0;
+	background: linear-gradient(transparent, var(--surface-raised));
+}
+
+/* The hover label floats beside the dot, outside the rail so no overflow clip
+   can cut it. Positioned by JS against the dot's own rect. */
+.turn-dot-bubble {
+	position: fixed;
+	z-index: 60;
+	transform: translate(-100%, -50%);
+	margin-left: -8px;
+	padding: 4px 9px;
+	color: var(--text);
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-sm);
+	box-shadow: var(--shadow-float);
+	font-size: var(--text-base);
+	white-space: nowrap;
+	pointer-events: none;
 }

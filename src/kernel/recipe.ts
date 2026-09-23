@@ -14,6 +14,7 @@
 
 import type { Expert } from "../experts/types.ts";
 import type { AnyTool } from "../profiles/types.ts";
+import type { Skill } from "../skills/types.ts";
 
 /**
  * What a caller asks for.
@@ -85,14 +86,41 @@ export function narrowTools(modeTools: AnyTool[], expert: Expert | undefined): T
 }
 
 /**
- * Compose the mode's prompt with the expert's methodology.
+ * Compose the mode's prompt with the expert's methodology and the skill catalog.
  *
- * The expert goes last so it reads as the specific instruction that qualifies
- * the general one above it. The heading is English to match the mode prompts;
- * the methodology body itself is whatever language the expert was written in,
- * which is a decision for whoever writes it, not for this function.
+ * The expert goes after the mode so it reads as the specific instruction that
+ * qualifies the general one above it. The skill catalog goes last and carries
+ * only names and one-line descriptions — never the bodies — which is the whole
+ * of progressive disclosure: the model can route a task to a skill without
+ * paying for the skill's full text, and it loads that text with `load_skill`
+ * only when a task actually matches.
+ *
+ * The heading is English to match the mode prompts; the bodies themselves are
+ * whatever language their authors wrote them in.
  */
-export function composePrompt(modePrompt: string, expert: Expert | undefined): string {
-	if (!expert) return modePrompt;
-	return [modePrompt, "", "---", "", `## Expert methodology: ${expert.label}`, "", expert.methodology].join("\n");
+export function composePrompt(modePrompt: string, expert: Expert | undefined, skills: Skill[] = []): string {
+	const parts = [modePrompt];
+	if (expert) {
+		parts.push("", "---", "", `## Expert methodology: ${expert.label}`, "", expert.methodology);
+	}
+	if (skills.length > 0) {
+		const catalog = skills
+			.map((skill) => {
+				const hint = skill.whenToUse ? ` — use when: ${skill.whenToUse}` : "";
+				return `- \`${skill.id}\`: ${skill.description}${hint}`;
+			})
+			.join("\n");
+		parts.push(
+			"",
+			"---",
+			"",
+			"## Available skills",
+			"",
+			"These skills are described here only by name and summary. Call the",
+			"`load_skill` tool to read a skill's full instructions when a task matches.",
+			"",
+			catalog,
+		);
+	}
+	return parts.join("\n");
 }

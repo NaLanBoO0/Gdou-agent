@@ -77,7 +77,22 @@
 				</div>
 			</header>
 
+			<div class="sidebar-resizer" id="sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="调整侧栏宽度"></div>
+
 			<aside class="sidebar" id="sidebar">
+				<header class="sidebar-brand">
+					<div class="sidebar-brand__mark">G</div>
+					<span class="sidebar-brand__name">GDOU</span>
+					<span class="sidebar-brand__badge">Beta</span>
+				</header>
+
+				<button id="new-chat-sidebar" class="new-task-button" type="button" title="新建对话">
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+						<path d="M12 5v14M5 12h14" />
+					</svg>
+					新建对话
+				</button>
+
 				<div class="mode-switch" id="mode-switch"></div>
 
 				<nav class="primary-nav" id="primary-nav">
@@ -190,6 +205,15 @@
 								</div>
 							</div>
 
+							<div class="turn-dot-wrap" id="turn-dots" hidden>
+								<nav class="turn-dot-rail" role="tablist" aria-label="对话轮次">
+									<div class="turn-dot-scroll" id="turn-dot-scroll"></div>
+								</nav>
+								<div class="turn-dot-fade turn-dot-fade--top"></div>
+								<div class="turn-dot-fade turn-dot-fade--bottom"></div>
+								<span class="turn-dot-bubble" id="turn-dot-bubble" hidden></span>
+							</div>
+
 							<footer class="composer-wrap">
 								<div class="status-line">
 									<span id="status-text"></span>
@@ -299,27 +323,15 @@
 						<header>
 							<div>
 								<h1>Skills</h1>
-								<p>可以按需加载的说明，外加它需要的资源文件。</p>
-							</div>
-						</header>
-						<div class="planned-card">
-							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
-								<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5ZM20 5.5A1.5 1.5 0 0 0 18.5 4H14v16h4.5a1.5 1.5 0 0 0 1.5-1.5Z" />
-							</svg>
-							<div>
-								<h2>还没做</h2>
 								<p>
-									这是三个功能里唯一真正新的机制：<b>渐进式披露</b>。会话开始时上下文里只有每个
-									skill 的名字和一句话描述，任务匹配后 agent 才把正文读进来。
+									可以按需加载的说明，外加它需要的资源文件。会话开始时上下文里只有
+									<b>名字 + 一句话描述</b>，任务匹配后 agent 才调 <code>load_skill</code> 把正文读进来。
 								</p>
-								<ul>
-									<li><b>不这么做就是矛盾的</b>：几十个 skill 的全文塞进系统提示就是几十万 token，正好把上下文裁剪省下来的预算又花回去。</li>
-									<li><b>只允许说明和资源文件</b>，不允许可执行脚本——否则「安装一个 skill」就等于「安装一段可执行代码」。</li>
-									<li>需要新增两个内核工具（列出、加载），所以它会动到工具层。</li>
-								</ul>
-								<span class="status-pill">待做</span>
 							</div>
-						</div>
+							<button class="outline-button" type="button" id="skills-refresh">重新扫描</button>
+						</header>
+						<div class="expert-grid" id="skills"></div>
+						<div id="skill-paths"></div>
 					</div>
 				</section>
 

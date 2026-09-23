@@ -29,6 +29,7 @@ export { toolchainPaths, type ToolchainPaths } from "./kernel/toolchain.ts";
 export { translate, replay, blocksToText, type AgentEvent, type AgentEventListener } from "./kernel/events.ts";
 export { CONTEXT_BUDGET_CHARS, contextReport, pruneForContext } from "./kernel/context.ts";
 export { withModelFallback, describeModel, type FallbackReport, type ModelFallbackOptions } from "./kernel/fallback.ts";
+export { appLogPath, armMemoryWatch, logLine, writeCrashRecord } from "./kernel/observability.ts";
 export {
 	LoopGuard,
 	callKey,
@@ -72,6 +73,11 @@ export { TOOL_NAMES, TOOL_FACTORIES, resolveTool, type ToolFactory } from "./pro
 // Experts
 export { getExpert, hasExpert, listExperts, loadExperts, type ExpertCatalog } from "./experts/registry.ts";
 export type { Expert, ExpertDraft } from "./experts/types.ts";
+
+// Skills (progressive disclosure)
+export { getSkill, listSkills, loadSkills, readSkillReference, type SkillCatalog } from "./skills/registry.ts";
+export type { Skill, SkillDraft, SkillReference } from "./skills/types.ts";
+export { loadSkillTool } from "./tools/load-skill.ts";
 
 // Markdown-backed definitions, shared by modes and experts
 export { parseFrontmatter, type Frontmatter } from "./definitions/frontmatter.ts";

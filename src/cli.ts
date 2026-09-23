@@ -30,6 +30,7 @@ import {
 import { narrowTools, type RecipeRequest } from "./kernel/recipe.ts";
 import { toolchainPaths } from "./kernel/toolchain.ts";
 import { getProfile, loadProfiles } from "./profiles/registry.ts";
+import { loadSkills } from "./skills/registry.ts";
 import {
 	AGENT_HOME,
 	describePiSource,
@@ -39,6 +40,8 @@ import {
 	PROJECT_ROOT,
 	projectExpertsDir,
 	projectModesDir,
+	projectSkillsDir,
+	skillsDir,
 } from "./paths.ts";
 import { canRunTui, runTui } from "./tui/index.ts";
 import { bold, cyan, dim, green, red, yellow } from "./ui/style.ts";
@@ -63,6 +66,7 @@ Options:
       --json             Emit normalized events as JSONL instead of text
       --list-profiles    List available modes and exit
       --list-experts     List available experts and exit
+      --list-skills      List available skills and exit
       --list-providers   List supported providers and exit
       --list-tools [id]  List the tools a mode exposes, then exit
       --doctor           Show configuration and credential status, then exit
@@ -116,6 +120,7 @@ type CliCommand =
 	| { kind: "help" }
 	| { kind: "list-profiles"; cwd?: string }
 	| { kind: "list-experts"; cwd?: string }
+	| { kind: "list-skills"; cwd?: string }
 	| { kind: "list-providers" }
 	| { kind: "list-tools"; profile?: string; expert?: string; cwd?: string }
 	| { kind: "doctor" };
@@ -137,6 +142,7 @@ function parseCli(argv: string[]): CliOptions | CliCommand {
 			tui: { type: "boolean", default: false },
 			"list-profiles": { type: "boolean", default: false },
 			"list-experts": { type: "boolean", default: false },
+			"list-skills": { type: "boolean", default: false },
 			"list-providers": { type: "boolean", default: false },
 			"list-tools": { type: "boolean", default: false },
 			doctor: { type: "boolean", default: false },
@@ -147,6 +153,7 @@ function parseCli(argv: string[]): CliOptions | CliCommand {
 	if (values.help) return { kind: "help" };
 	if (values["list-profiles"]) return { kind: "list-profiles", cwd: values.cwd };
 	if (values["list-experts"]) return { kind: "list-experts", cwd: values.cwd };
+	if (values["list-skills"]) return { kind: "list-skills", cwd: values.cwd };
 	if (values["list-providers"]) return { kind: "list-providers" };
 	if (values["list-tools"]) {
 		// Accept `--list-tools <profileId>` or `--list-tools -p <profileId>`.
@@ -278,9 +285,32 @@ function printExperts(cwd: string): void {
 	}
 }
 
+function printSkills(cwd: string): void {
+	const catalog = loadSkills(cwd);
+	process.stdout.write(`${bold("Skills")}\n`);
+	if (catalog.skills.length === 0) {
+		process.stdout.write(`  ${dim("(none)")}\n`);
+	}
+	for (const skill of catalog.skills) {
+		const refs = skill.references.length > 0 ? dim(`  refs: ${skill.references.map((r) => r.name).join(", ")}`) : "";
+		process.stdout.write(`  ${cyan(skill.id.padEnd(18))} ${skill.description}${refs}\n`);
+	}
+	if (catalog.errors.length > 0) {
+		process.stdout.write(`\n${red("Some skill directories could not be loaded:")}\n`);
+		for (const error of catalog.errors) process.stdout.write(`  ${error}\n`);
+	}
+	// Skills are loaded on demand by the model, not selected on the CLI — this
+	// list is diagnostics, so the footer says where to put one rather than how
+	// to pick one.
+	process.stdout.write(`\n${dim("A skill is a directory holding SKILL.md. The model loads one with the load_skill tool.")}\n`);
+	process.stdout.write(`${dim("Looked in:")}\n`);
+	for (const dir of [projectSkillsDir(cwd), skillsDir()]) {
+		process.stdout.write(`  ${dim(`${dir}/<id>/SKILL.md`)}\n`);
+	}
+}
+
 /** Locate a pi-managed binary, or return undefined when it has not been fetched. */
-function findManagedBinary(binDir: string, name: string): string | undefined {
-	const candidates = process.platform === "win32" ? [`${name}.exe`, name] : [name];
+function findManagedBinary(binDir: string, name: string): string | undefined {	const candidates = process.platform === "win32" ? [`${name}.exe`, name] : [name];
 	return candidates.map((file) => join(binDir, file)).find((path) => existsSync(path));
 }
 
@@ -459,6 +489,9 @@ async function main(): Promise<number> {
 				return 0;
 			case "list-experts":
 				printExperts(parsed.cwd ?? process.cwd());
+				return 0;
+			case "list-skills":
+				printSkills(parsed.cwd ?? process.cwd());
 				return 0;
 			case "list-providers":
 				printProviders();

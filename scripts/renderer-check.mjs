@@ -339,7 +339,19 @@ async function main() {
 			await client.evaluate("window.__lastSpec"));
 		report("切换后菜单收起", (await client.evaluate(display("model-menu"))) === "none");
 
-		console.log("\n第五步：删掉 key");
+		console.log("\n第五步：侧栏品牌区与拖拽");
+		report("侧栏顶部有品牌区", (await client.evaluate("!!document.querySelector('.sidebar-brand')")) === true);
+		report("有醒目的新建对话按钮", (await client.evaluate("!!document.getElementById('new-chat-sidebar')")) === true);
+		report("侧栏有拖拽分隔条", (await client.evaluate("!!document.getElementById('sidebar-resizer')")) === true);
+		report("拖拽分隔条光标是 col-resize",
+			(await client.evaluate(`getComputedStyle(document.getElementById("sidebar-resizer")).cursor`)) === "col-resize");
+		report("圆点导航容器存在", (await client.evaluate("!!document.getElementById('turn-dots')")) === true);
+		report("圆点导航初始隐藏（不足两轮）",
+			(await client.evaluate("document.getElementById('turn-dots').hidden")) === true);
+		report("侧栏宽度走 CSS 变量",
+			(await client.evaluate(`getComputedStyle(document.getElementById("shell")).getPropertyValue("--sidebar-w")`).trim().length) > 0);
+
+		console.log("\n第六步：删掉 key");
 		await client.evaluate("document.querySelector('[data-view=settings]').click()");
 		await waitFor(client, "document.querySelectorAll('#credential-list .cred-row').length", (n) => Number(n) >= 5, "the rows again");
 		await client.evaluate(`(function () { var row = ${deepseekRow}; row.querySelector("button.ghost").click(); })()`);

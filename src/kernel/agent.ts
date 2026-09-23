@@ -14,6 +14,9 @@ import { getExpert } from "../experts/registry.ts";
 import type { Expert } from "../experts/types.ts";
 import { FALLBACK_PROFILE_ID, getProfile } from "../profiles/registry.ts";
 import type { AgentProfile, AnyTool } from "../profiles/types.ts";
+import { loadSkills } from "../skills/registry.ts";
+import type { Skill } from "../skills/types.ts";
+import { loadSkillTool } from "../tools/load-skill.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
@@ -169,6 +172,22 @@ export interface AgentSession {
 	 * one.
 	 */
 	readonly unavailableTools: string[];
+	/**
+	 * The skills available to this session, in the same order they appear in the
+	 * prompt catalog.
+	 *
+	 * Exposed so a front-end can show "these skills are on offer" without
+	 * duplicating the loader. Only names and summaries, never the bodies — the
+	 * bodies are fetched on demand by the model through `load_skill`.
+	 */
+	readonly skills: Skill[];
+	/**
+	 * Skill directories that exist but could not be loaded, with the reason.
+	 *
+	 * Reported rather than dropped for the same reason the expert catalog does:
+	 * a silently missing skill looks exactly like a typo in the id.
+	 */
+	readonly skillErrors: string[];
 	/** The permission policy this session enforces. */
 	readonly policy: PermissionPolicy;
 	/**
@@ -385,6 +404,21 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 		setup;
 	const { tools, unavailable } = selection;
 
+	// Skills are loaded here, once per session, and reduced to names + summaries
+	// in the prompt. The bodies stay out until the model asks for them — that is
+	// the entire cost win of progressive disclosure, and it is why the catalog is
+	// injected as a list rather than concatenated.
+	const skills = loadSkills(cwd);
+
+	// `load_skill` rides along with the mode's own tools. It is not part of the
+	// mode's set because it is not a capability the mode decides — every session
+	// can read a skill, since a skill is just instructions — and it is not
+	// narrowed by the expert for the same reason: narrowing is about *capability*,
+	// and reading instructions is not a capability in that sense. Computed once so
+	// the session's reported tool list and the agent's actual tool list cannot
+	// disagree about whether it exists.
+	const allTools = [...tools, loadSkillTool(cwd)];
+
 	const denials: PermissionDenial[] = [];
 	const permissionContext = defaultPermissionContext(cwd);
 
@@ -429,10 +463,11 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 
 	const agent = new Agent({
 		initialState: {
-			systemPrompt: composePrompt(profile.systemPrompt({ cwd }), expert),
+			systemPrompt: composePrompt(profile.systemPrompt({ cwd }), expert, skills.skills),
 			model,
 			thinkingLevel,
-			tools,
+			// `load_skill` rides along with the mode's own tools, computed above.
+			tools: allTools,
 			// A resumed conversation already carries a leading system message, so
 			// the agent leaves it alone rather than prepending a second one.
 			messages: options.messages,
@@ -565,8 +600,10 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 		recipe,
 		profile,
 		expert,
-		tools,
+		tools: allTools,
 		unavailableTools: unavailable,
+		skills: skills.skills,
+		skillErrors: skills.errors,
 		policy,
 		denials,
 		model,

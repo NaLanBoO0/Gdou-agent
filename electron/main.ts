@@ -24,6 +24,7 @@ import { loadSettings, saveSettings } from "../src/config/settings.ts";
 import { authPath, providerCredentials, removeApiKey, setApiKey } from "../src/kernel/credentials.ts";
 import { scriptedRun, scriptedRunEnabled } from "../src/kernel/demo.ts";
 import { replay, type AgentEvent } from "../src/kernel/events.ts";
+import { armMemoryWatch, logLine, writeCrashRecord } from "../src/kernel/observability.ts";
 import { narrowTools } from "../src/kernel/recipe.ts";
 import { ModelRuntime } from "../src/kernel/runtime.ts";
 import {
@@ -38,7 +39,8 @@ import {
 } from "../src/kernel/sessions.ts";
 import { provisionManagedBinaries, type ProvisionReport, toolchainPaths } from "../src/kernel/toolchain.ts";
 import { getExpert, loadExperts } from "../src/experts/registry.ts";
-import { AGENT_HOME, describePiSource, expertsDir, IS_BUNDLED, PROJECT_ROOT, projectExpertsDir } from "../src/paths.ts";
+import { listSkills } from "../src/skills/registry.ts";
+import { AGENT_HOME, describePiSource, expertsDir, IS_BUNDLED, PROJECT_ROOT, logsDir, projectExpertsDir, projectSkillsDir, skillsDir } from "../src/paths.ts";
 import { getProfile, listProfiles } from "../src/profiles/registry.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -321,6 +323,11 @@ async function startSession(profileId: string, options: StartOptions = {}): Prom
 
 	session = started;
 	presentedPaths.clear();
+	// One line per session is cheap and answers "what model/mode/cwd was it
+	// actually running" without re-deriving it from a crash or a screenshot.
+	logLine(
+		`session started: mode=${profileId} expert=${started.expert?.id ?? "-"} model=${started.model.provider}/${started.model.id} cwd=${cwd} scripted=${scripted ? "yes" : "no"}`,
+	);
 	started.subscribe((event) => {
 		// Remember what the model handed over. The preview channel reads files,
 		// so it must be limited to paths that went through `present_files` —
@@ -422,6 +429,7 @@ interface KernelProbe {
 		projectRoot: string;
 		piSource: string;
 		agentHome: string;
+		logsDir: string;
 		toolBinDir: string;
 		bundled: boolean;
 		packaged: boolean;
@@ -468,6 +476,7 @@ async function probeKernel(): Promise<KernelProbe> {
 			projectRoot: PROJECT_ROOT,
 			piSource: describePiSource(),
 			agentHome: AGENT_HOME,
+			logsDir: logsDir(),
 			toolBinDir: toolchainPaths().binDir,
 			// Two independent signals: `IS_BUNDLED` is set by esbuild at build
 			// time, `isPackaged` by Electron at install time. In development
@@ -567,7 +576,28 @@ if (!hasInstanceLock) {
 	});
 }
 
+// ------------------------------------------------------- crash and logging
+
+// Registered at module scope, before any work, so a failure during startup is
+// also captured. Each handler writes synchronously and never throws: it is the
+// last code that runs before the process may die, and a second throw here is a
+// crash with no record.
+process.on("uncaughtException", (error) => {
+	writeCrashRecord("uncaughtException", error);
+});
+process.on("unhandledRejection", (reason) => {
+	writeCrashRecord("unhandledRejection", reason);
+});
+// The renderer dying is the failure mode we chased all afternoon without any
+// clue; this turns "the page went away" into a file on disk.
+app.on("render-process-gone", (_event, _webContents, details) => {
+	writeCrashRecord("render-process-gone", new Error(`${details.reason} (exitCode ${details.exitCode})`));
+});
+
 void app.whenReady().then(() => {
+	// Armed first so a crash anywhere later in this callback still leaves a trail.
+	armMemoryWatch();
+	logLine("main process ready");
 	// A conversation stored by an earlier build lives under the old per-profile
 	// name. Adopt it before any window asks for the list, or it would simply
 	// stop appearing.
@@ -665,6 +695,30 @@ void app.whenReady().then(() => {
 			// Where the loader looks, most specific first. Shown in the interface
 			// because "where do I put my own expert" is otherwise unanswerable.
 			paths: [`${join(projectExpertsDir(cwd), "<id>.md")}`, `${join(expertsDir(), "<id>.md")}`],
+		};
+	});
+
+	/**
+	 * The skills catalog, for the skills page.
+	 *
+	 * Skills already feed the prompt through progressive disclosure (E1); this is
+	 * the *visible* half — what skills exist, what they are for, and where they
+	 * live, so "how do I add one" is answerable the way it is for experts.
+	 */
+	ipcMain.handle("agent:skills", () => {
+		const cwd = resolveCwd();
+		const skills = listSkills(cwd);
+		return {
+			skills: skills.map((skill) => ({
+				id: skill.id,
+				label: skill.label,
+				description: skill.description,
+				whenToUse: skill.whenToUse,
+				references: skill.references.map((reference) => reference.name),
+				source: skill.source,
+			})),
+			// Where the loader looks, most specific first.
+			paths: [`${join(projectSkillsDir(cwd), "<id>/SKILL.md")}`, `${join(skillsDir(), "<id>/SKILL.md")}`],
 		};
 	});
 

@@ -21,6 +21,7 @@ API key 自己提供、存在本机（`~/.gdou-agent/auth.json`），对话记�
 - **联网** —— 抓网页正文、搜索（Brave / Tavily）
 - **交付产物** —— agent 显式把文件交给你，界面里直接预览（HTML 活预览 / 图片 / 文本）
 - **专家** —— 用 markdown 写一个人格，附在会话上（随包三个示例）
+- **技能** —— 一个目录（`SKILL.md` + 可选 `references/`）就是一段可复用流程，**按需加载**：会话里只挂名字和一句话描述，任务匹配了模型才调 `load_skill` 读正文（随包两个示例）
 - **模式** —— 决定 agent 能做什么，同样是一个 markdown 文件。随包 `general`（日常任务，不碰文件）与 `coding`（仓库开发），自己加一个 = 加一个文件
 - **模型与凭据** —— 界面上直接填 key（侧栏「设置」，`Ctrl+5`），编写器右下角点模型名就在已配置的服务商之间切换；key 只以掩码显示，没有「读回我的 key」这个通道
 - **扛得住** —— 连着重复的同一次调用会被拦下并告知模型；provider 在产出内容前挂掉会自动换到备用模型
@@ -447,6 +448,10 @@ gdou-agent/
       types.ts          Expert 契约
       builtin.ts        随包的三个示例专家（也是 markdown，走同一个解析器）
       registry.ts       三级加载：项目级 > 用户级 > 内置
+    skills/
+      types.ts          Skill 契约（正文 + references）
+      builtin.ts        随包的两个示例技能
+      registry.ts       三级加载（目录 + SKILL.md），渐进式披露的数据源
     profiles/           模式层（代码里仍沿用 profile 这个名字）
       types.ts          AgentProfile 契约
       builtin.ts        随包的 general / coding，内联 markdown
@@ -460,6 +465,7 @@ gdou-agent/
       net-guard.ts      URL 安全：拦回环 / 私网 / 云元数据 / 内嵌凭据
       web-fetch.ts      抓网页正文（readability + linkedom）
       web-search.ts     联网搜索（Brave / Tavily，需环境变量里的 key）
+      load-skill.ts     按需读技能正文（渐进式披露的执行点）
     tui/                交互式前端（见上面「TUI 界面」）
     ui/
       style.ts          极简 ANSI 辅助函数
@@ -582,6 +588,35 @@ thinkingLevel: high                   # 可选
 
 用 markdown 而不是代码，是因为用户要能自己写、能改、能分享。一个需要写 TypeScript 才能定制的
 "专家"，实际使用者只有写这个项目的人。
+
+## 技能
+
+一段可复用的流程，和专家的区别在于**它默认不在上下文里**。一个技能是一个目录：
+
+```
+~/.gdou-agent/skills/<id>/SKILL.md          用户级
+<cwd>/.gdou-agent/skills/<id>/SKILL.md      项目级，同名时优先
+```
+
+`SKILL.md` 的 frontmatter 放元数据，正文是方法论；`references/` 放可选参考文件：
+
+```markdown
+---
+name: 提交改动
+description: 把改动整理成一条清晰的 commit
+when_to_use: 用户说"提交"或"推送"时          # 可选，路由提示
+---
+
+目标是**一次提交表达一件事**……
+
+术语表见 references/glossary.md，需要时再读。
+```
+
+**渐进式披露**是它的全部价值：会话开始时，提示里只有每个技能的 `id` + `description` +
+`when_to_use`（几十个技能加起来也就几十行）；模型判断任务匹配后，才调 `load_skill`
+读正文。不这么做，几十个技能全文塞进系统提示就是几十万 token 的固定开销。
+
+列出技能用 `--list-skills`。技能和专家、模式一样，是用户能自己写、能改、能分享的文件。
 
 prompt 也可以从 stdin 来：`echo "explain closures" | gdou-agent -p general`。
 
@@ -783,6 +818,7 @@ DEEPSEEK_API_KEY=sk-invalid npm run run -- -p general "hi"
 | `~/.gdou-agent/notes.json` | 草稿纸笔记 |
 | `~/.gdou-agent/sessions/<id>.json` | 一段对话一个文件，两行 JSON（摘要 + 记录） |
 | `~/.gdou-agent/experts/<id>.md` | 你自己写的专家 |
+| `~/.gdou-agent/skills/<id>/` | 你自己写的技能（目录 + `SKILL.md` + 可选 `references/`） |
 | `~/.gdou-agent/modes/<id>.md` | 你自己写的模式 |
 | `~/.gdou-agent/agent/bin/` | 随包投放的 ripgrep 与 fd（pi 的目录，被 piConfig 挪到这里） |
 
@@ -792,14 +828,12 @@ DEEPSEEK_API_KEY=sk-invalid npm run run -- -p general "hi"
 ## 下一步
 
 内核、CLI、TUI、桌面 GUI、对话界面、会话持久化与多会话（含改名）、工作目录选择、
-上下文裁剪与告知、无凭据预览、安装包、专家、模式、重复调用守卫、备用模型、
-按模式选模型都已经可用。
+上下文裁剪与告知、无凭据预览、安装包、专家、模式、技能（渐进式披露）、重复调用守卫、
+备用模型、按模式选模型都已经可用。
 
 **还没做的：**
 
 1. **接真实 provider 跑一轮**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。这一条需要你的 key，我无法自己完成。备用模型落地之后这一条更值得做了——它正是「provider 抖一下整轮就没了」的解法，而脚本化运行永远复现不出真实的 429 / 502。
-2. **skills**。三个自定义功能里唯一真正新的机制：会话开始时上下文里只放每个 skill 的
-   名字和一句话描述，任务匹配后 agent 才把正文读进来。不这么做的话，几十个 skill
-   全文进系统提示就是几十万 token。按目前的决定：只允许说明和资源文件，不允许可执行脚本。
-3. **自动化项目**。它本身就是「配方 + 提示词 + 触发时机」，前两样（组合模型、模式与
-   专家的组合）现在都在了。按目前的决定：只做运行时触发，产出算单独一个概念。
+2. **观测（崩溃报告 / 日志落盘 / 内存诊断）**。出问题时能不能拿到线索，是交给同事试用前的必需品。
+3. **子代理**。独立上下文、把重活拆出去并行。这是「按场景选模型」真正开始省钱的地方——压缩、评估、子代理这些内部环节用 lite 模型。
+4. **自动化项目**。它本身就是「配方 + 提示词 + 触发时机」，前两样（组合模型、模式与专家的组合）现在都在了。按目前的决定：只做运行时触发，产出算单独一个概念。

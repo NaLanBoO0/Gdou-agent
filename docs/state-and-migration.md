@@ -13,8 +13,10 @@
 | `~/.gdou-agent/settings.json` | 默认模式 / 专家 / 模型 / 备用模型 / 工作目录 / 权限档位 / 重复调用上限 | ✅ 要 |
 | `~/.gdou-agent/notes.json` | `save_note` 工具存的事实 | ✅ 要 |
 | `~/.gdou-agent/experts/` | 你自己写的专家（markdown） | ✅ 要 |
+| `~/.gdou-agent/skills/` | 你自己写的技能（目录 + `SKILL.md` + `references/`） | ✅ 要 |
 | `~/.gdou-agent/modes/` | 你自己写的模式（markdown） | ✅ 要 |
 | `~/.gdou-agent/auth.json` | **API key**（明文；POSIX 下 0600） | ✅ 要 —— 不带走就得在新机器上重新填一次 |
+| `~/.gdou-agent/logs/` | 崩溃报告 / 运行日志 / 堆报告 | ❌ 不要，诊断线索，可随时删 |
 | `~/.gdou-agent/agent/bin/` | 托管下载的 `rg` / `fd` 二进制（约 9 MB） | ❌ 不要，会自动重下 |
 
 `~/.gdou-agent` 可以用环境变量 `GDOU_AGENT_HOME` 改到别处。
