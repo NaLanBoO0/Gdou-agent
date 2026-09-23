@@ -1,27 +1,66 @@
 # GDOU agent
 
-基于 pi 内核（`pi-ai` + `pi-agent-core` + `pi-coding-agent`）构建的自定义 agent。
+一个跑在你自己机器上的桌面 agent，基于 [pi](https://pi.dev) 内核
+（`pi-ai` + `pi-agent-core` + `pi-coding-agent`）。
 
-目前内置两种模式：**general**（日常任务，不碰文件）和 **coding**（仓库开发）。
-内核与模式解耦，所以新增第三种模式只需要写一个文件，不用动内核。
+自带 API key，对话和文件都留在本机，不经过任何服务器。
 
-一个会话 = **模式 + 可选专家**。模式决定 agent **能**做什么（工具集、基础提示），专家决定它
-**该怎么想**（方法论）。两者正交，可以叠加，例如「coding 模式 + 安全审计专家」。
-**专家只能收窄工具集，不能扩大**——它是用户自己写的 markdown 文件，如果它能加工具，
-"装个专家"就变成了"装个后门"。随包提供三个示例专家（见 `--list-experts`）。
+![对话界面](docs/screenshots/chat-conversation.png)
 
-三种入口：无界面 CLI、终端 TUI、桌面 GUI（可打包成 exe 安装包）。
-三者都建立在同一个内核之上，共用同一套归一化事件流。
+## 它能做什么
 
-[`FEATURES.md`](FEATURES.md) 是功能清单：在 pi 内核之上加了什么、每一项怎么实现的、
-以及那些不想再踩一次的坑。
+- **对话** —— 流式输出、可折叠的工具调用卡片、中断、markdown 渲染
+- **改文件** —— 读写编辑、搜索、执行命令，每个变更行显示 `+N −M`
+- **联网** —— 抓网页正文、搜索（Brave / Tavily）
+- **交付产物** —— agent 显式把文件交给你，界面里直接预览（HTML 活预览 / 图片 / 文本）
+- **专家** —— 用 markdown 写一个人格，附在会话上（随包三个示例）
+- **两种模式** —— `general`（日常任务，不碰文件）、`coding`（仓库开发）
 
-[`DESIGN.md`](DESIGN.md) 是待做功能的**设计方案**（自动化项目 / 专家 / skills），
-用来讨论而不是执行——里面有需要拍板的问题。
+三种入口共用同一个内核：无界面 CLI、终端 TUI、桌面 GUI（可打包成 exe）。
 
-[`docs/workbuddy对齐清单.md`](docs/workbuddy对齐清单.md) 是**差距账目**：
-对标 WorkBuddy 的 15 类能力逐条列出「它怎么做 / 我们有什么」，并给出优先级。
-要做新功能之前先看它——**优先级本身就是结论**，顺序错了会付两次代价。
+## 三条承重的设计决定
+
+**专家只能收窄工具集，不能扩大。** 专家是用户自己写的 markdown 文件。
+如果它能加工具，「装个专家」就等于「装个后门」——一个第三方专家包能把 `general`
+的文件访问打开。所以工具集是**交集**：`模式的工具 ∩ 专家的允许集`。
+
+**权限门的主轴是路径归属，不是工具种类。** 同一个 `write` 写工作目录内是日常操作，
+写 `~/.ssh` 不是。判定链是**有序**的，靠后的阶段不能放行靠前已拒的——
+所以 `danger-full-access` 档位下读凭据文件仍然被拒，因为档位在第 4 阶段才被查询，
+而凭据在第 1 阶段已经返回了。
+
+**命令检查器是黑名单，不是沙箱。** 它拦住那些能绕开所有路径保护的命令形态
+（读凭据、下载即执行、编码执行、反弹 shell、工作目录外的递归删除），
+**但它提高门槛，不建立边界**——一个坚决的模型能写出不匹配任何模式的等价形式。
+真正的边界是 OS 级的，那是另一件事。文档里如实标注了这一点。
+
+> pi 本身没有任何路径约束——它的 `resolvePath` 对绝对路径直接放行。
+> 上面这些是这个项目**加上去**的，不是继承来的。
+
+## 界面
+
+| 交付产物 + 预览 | 深色主题 |
+| --- | --- |
+| ![产物交付](docs/screenshots/artifacts.png) | ![深色](docs/screenshots/dark.png) |
+
+| 专家 | 诊断 |
+| --- | --- |
+| ![专家](docs/screenshots/experts.png) | ![诊断](docs/screenshots/diagnostics.png) |
+
+更多截图（含变更追踪、工具分组、打包后的实际界面）在
+[`docs/screenshots/`](docs/screenshots)。
+
+## 文档
+
+| 文档 | 内容 |
+| --- | --- |
+| [`FEATURES.md`](FEATURES.md) | 功能清单：加了什么、怎么实现的、**以及踩过的坑** |
+| [`docs/workbuddy对齐清单.md`](docs/workbuddy对齐清单.md) | 差距账目：对标 WorkBuddy 的 15 类能力逐条列出，含优先级 |
+| [`docs/state-and-migration.md`](docs/state-and-migration.md) | 状态文件在哪、怎么换机器 |
+| [`DESIGN.md`](DESIGN.md) | 待做功能的设计方案（讨论稿，含需要拍板的问题） |
+
+`FEATURES.md` 里「踩过的坑」那几节大概是这份文档里最有价值的部分——
+每个坑都写了**为什么当时会判断错**，而不只是结论。
 
 ## 快速开始
 
@@ -47,7 +86,19 @@ npm run run
 # 6. 或者直接无界面跑
 npm run run -- -p general "what is the time in Tokyo?"
 npm run run -- -p coding "summarize this repository"
+
+# 7. 桌面 GUI
+npm run gui
 ```
+
+想要**联网搜索**的话再加一个搜索服务商的 key（`web_fetch` 不需要）：
+
+```bash
+export BRAVE_API_KEY=...    # 或 TAVILY_API_KEY=...
+```
+
+搜索 key 走环境变量而不是写进配置文件，这是有意的：权限门**允许工具读**程序配置
+（只拦写），所以存在那里的 key 会被模型调用的任何工具读到。
 
 PowerShell 里设置 key 的写法是 `$env:DEEPSEEK_API_KEY="sk-..."`。
 
