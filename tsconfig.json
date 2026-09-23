@@ -1,0 +1,27 @@
+{
+	"extends": "./tsconfig.pi-paths.json",
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"lib": ["ES2022"],
+		"types": ["node"],
+		"strict": true,
+		"noEmit": true,
+		"exactOptionalPropertyTypes": false,
+		"skipLibCheck": true,
+		"esModuleInterop": true,
+		"resolveJsonModule": true,
+		"allowImportingTsExtensions": true,
+		"forceConsistentCasingInFileNames": true,
+		"erasableSyntaxOnly": true,
+		"verbatimModuleSyntax": false
+	},
+	"include": [
+		"src/**/*.ts",
+		"electron/**/*.ts",
+		"scripts/**/*.mjs",
+		"scripts/**/*.ts",
+		"vendor/pi/packages/*/src/**/*.d.ts"
+	]
+}

@@ -1,0 +1,549 @@
+/**
+ * Application shell: titlebar, sidebar, main column.
+ *
+ * The grid is `52px / 240px` because that is SztuCode's shell, and the two
+ * apps are meant to read as the same product. The titlebar spans both columns
+ * and the sidebar can collapse to zero width without the main column moving.
+ *
+ * The window is frameless, so this titlebar *is* the window chrome: the drag
+ * region is real and the buttons are ours. Anything interactive inside it has
+ * to opt out of dragging or it becomes unclickable.
+ */
+
+.sztu-shell {
+	display: grid;
+	grid-template: var(--titlebar-h) minmax(0, 1fr) / var(--sidebar-w) minmax(0, 1fr);
+	height: 100%;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--surface);
+	border: 1px solid var(--border);
+}
+
+.sztu-shell.sidebar-collapsed {
+	grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* Animated only while the user is toggling. Leaving the transition on would
+   also animate window resizes, where it reads as lag. */
+.sztu-shell.sidebar-animating {
+	transition: grid-template-columns var(--speed) ease;
+}
+
+.sztu-shell.window-resizing,
+.sztu-shell.window-resizing .sidebar {
+	transition: none !important;
+}
+
+/* --------------------------------------------------------------- titlebar */
+
+.titlebar {
+	grid-column: 1 / -1;
+	position: relative;
+	z-index: 80;
+	display: flex;
+	align-items: center;
+	height: var(--titlebar-h);
+	background: var(--surface-raised);
+	user-select: none;
+	-webkit-app-region: drag;
+}
+
+.window-mark {
+	flex: 0 0 auto;
+	width: 15px;
+	height: 15px;
+	margin-left: 16px;
+	background: linear-gradient(140deg, #4a9dff, #6a5bff 55%, #2b6ce8);
+	border: 1.5px solid var(--text-muted);
+	border-radius: 4px;
+	box-shadow: inset -4px 0 var(--surface-raised);
+	pointer-events: none;
+}
+
+.nav-toggle-wrap {
+	position: relative;
+	display: grid;
+	flex: 0 0 auto;
+	width: 34px;
+	height: 34px;
+	margin-left: 5px;
+	place-items: center;
+	-webkit-app-region: no-drag;
+}
+
+.nav-toggle {
+	display: grid;
+	width: 30px;
+	height: 30px;
+	place-items: center;
+	color: var(--text-strong);
+	background: transparent;
+	border: 1px solid transparent;
+	border-radius: 7px;
+	transition: color var(--speed) ease, background-color var(--speed) ease, border-color var(--speed) ease;
+}
+
+.nav-toggle:hover {
+	color: var(--text-strong);
+	background: var(--surface-raised);
+	border-color: var(--border-strong);
+}
+
+.nav-toggle:active {
+	background: var(--surface-soft);
+	transform: translateY(1px);
+}
+
+.app-menu-bar {
+	position: relative;
+	z-index: 30;
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	gap: 1px;
+	height: 100%;
+	margin-left: 4px;
+	-webkit-app-region: no-drag;
+}
+
+.app-menu-item {
+	position: relative;
+	display: flex;
+	align-items: center;
+	height: 100%;
+}
+
+.app-menu-item > button {
+	min-width: 44px;
+	height: 29px;
+	padding: 0 9px;
+	color: var(--text-muted);
+	border-radius: 5px;
+	font-size: var(--text-lg);
+	line-height: 1;
+}
+
+.app-menu-item > button:hover,
+.app-menu-item > button[aria-expanded="true"] {
+	color: var(--text);
+	background: rgb(36 42 48 / 8%);
+}
+
+.app-menu-popover {
+	position: absolute;
+	z-index: 9999;
+	top: 35px;
+	left: 0;
+	display: grid;
+	min-width: 210px;
+	padding: 6px;
+	color: var(--text);
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: 13px;
+	box-shadow: var(--shadow-pop);
+}
+
+.app-menu-popover[hidden] {
+	display: none;
+}
+
+.app-menu-popover button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 24px;
+	min-height: 34px;
+	width: 100%;
+	padding: 6px 10px;
+	color: inherit;
+	border-radius: 8px;
+	text-align: left;
+	font-size: var(--text-md);
+}
+
+.app-menu-popover button:hover {
+	background: var(--surface-soft);
+}
+
+.app-menu-separator {
+	height: 1px;
+	margin: 5px 7px;
+	background: var(--border-soft);
+}
+
+.titlebar-drag-region {
+	flex: 1 1 auto;
+	align-self: stretch;
+	min-width: 48px;
+}
+
+.window-actions {
+	display: flex;
+	flex: 0 0 auto;
+	align-items: stretch;
+	height: var(--titlebar-h);
+	margin-left: auto;
+	color: var(--text);
+	-webkit-app-region: no-drag;
+}
+
+.window-action {
+	display: grid;
+	width: 46px;
+	height: var(--titlebar-h);
+	place-items: center;
+	color: inherit;
+	transition: color var(--speed) ease, background-color var(--speed) ease;
+}
+
+.window-action:hover {
+	color: var(--text-strong);
+	background: var(--surface-soft);
+}
+
+.window-action:active {
+	background: var(--border);
+}
+
+/* The one button that is allowed to be red. */
+.window-action--close:hover {
+	color: #fff;
+	background: var(--danger);
+}
+
+.window-action--close:active {
+	color: #fff;
+	background: #a92318;
+}
+
+/* ---------------------------------------------------------------- sidebar */
+
+.sidebar {
+	display: flex;
+	flex-direction: column;
+	min-width: 0;
+	overflow: hidden;
+	padding: 8px 8px 0;
+	background: var(--surface);
+}
+
+.mode-switch {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 2px;
+	padding: 2px;
+	background: var(--surface-soft);
+	border-radius: 10px;
+}
+
+.mode-switch button {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 7px;
+	min-height: 33px;
+	border-radius: 9px;
+	font-size: var(--text-lg);
+}
+
+.mode-switch button.active {
+	background: var(--surface-raised);
+	border: 1px solid var(--border-strong);
+	box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+}
+
+.primary-nav {
+	display: grid;
+	gap: 2px;
+	margin-top: 14px;
+}
+
+.primary-nav button {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 40px;
+	width: 100%;
+	padding: 0 9px;
+	color: var(--text);
+	border-radius: 8px;
+	text-align: left;
+	font-size: var(--text-lg);
+}
+
+.primary-nav button:hover,
+.primary-nav button.active {
+	background: var(--surface-hover);
+}
+
+.primary-nav button svg {
+	flex: 0 0 auto;
+	color: var(--text-muted);
+}
+
+.primary-nav button.active svg {
+	color: var(--accent);
+}
+
+.primary-nav kbd {
+	margin-left: auto;
+}
+
+.side-section {
+	margin-top: 28px;
+}
+
+.side-section.conversations {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+	overflow: hidden;
+	margin-top: 22px;
+}
+
+.side-label {
+	display: block;
+	margin: 0 8px 10px;
+	color: var(--text-muted);
+	font-size: var(--text-md);
+}
+
+.side-label--action {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+}
+
+.side-label--action button {
+	display: grid;
+	width: 24px;
+	height: 24px;
+	place-items: center;
+	color: var(--text-muted);
+	border-radius: 5px;
+}
+
+.side-label--action button:hover {
+	background: var(--surface-hover);
+}
+
+.conversation-list {
+	min-height: 0;
+	overflow-y: auto;
+	padding-bottom: 8px;
+}
+
+.conversation-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	min-height: 36px;
+	width: 100%;
+	padding: 0 9px 0 14px;
+	color: var(--text-muted);
+	border-radius: 8px;
+	text-align: left;
+	font-size: var(--text-md);
+}
+
+.conversation-row:hover,
+.conversation-row.active {
+	color: var(--text);
+	background: var(--surface-hover);
+}
+
+.conversation-row span {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.conversation-row small {
+	margin-left: auto;
+	color: var(--text-faint);
+	font-size: var(--text-xs);
+}
+
+.side-empty {
+	margin: 0 8px;
+	color: var(--text-faint);
+	font-size: var(--text-md);
+	line-height: 1.6;
+}
+
+.sidebar-footer {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+	margin-top: auto;
+	padding: 12px 8px 16px;
+	border-top: 1px solid var(--border-soft);
+}
+
+.account {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-width: 0;
+	margin-right: auto;
+	color: var(--text);
+	text-align: left;
+}
+
+.account svg {
+	flex: 0 0 auto;
+	color: var(--accent);
+}
+
+.account span {
+	display: grid;
+	min-width: 0;
+}
+
+.account b {
+	overflow: hidden;
+	font-size: var(--text-base);
+	font-weight: 500;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.account small {
+	overflow: hidden;
+	color: var(--text-faint);
+	font-size: var(--text-xs);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.settings-link {
+	display: grid;
+	width: 28px;
+	height: 28px;
+	place-items: center;
+	color: var(--text-faint);
+	border-radius: 8px;
+	opacity: 0.75;
+	transition: all var(--speed) var(--ease);
+}
+
+.settings-link:hover {
+	color: var(--text-muted);
+	background: var(--surface-soft);
+	opacity: 1;
+}
+
+.settings-link:hover svg {
+	transform: rotate(45deg);
+}
+
+.settings-link svg {
+	width: 16px;
+	height: 16px;
+	transition: transform 280ms var(--ease);
+}
+
+/* ------------------------------------------------------------------- main */
+
+.main {
+	position: relative;
+	min-width: 0;
+	min-height: 0;
+	overflow: hidden;
+	background: var(--surface-raised);
+}
+
+/* A view fills the main column and stacks its own children. Flex rather than a
+   block so the header keeps its exact height and the body takes the rest — a
+   `calc(100% - 50px)` elsewhere has to agree with the header's real height, and
+   silently stops agreeing the moment the header's padding changes. */
+.view {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+
+.view[hidden] {
+	display: none;
+}
+
+/* A page that scrolls as a whole: the settings-shaped screens, which are a
+   column of cards rather than a fixed shell with a scrolling middle. */
+.simple-page {
+	flex: 1 1 auto;
+	min-height: 0;
+	overflow-y: auto;
+	padding: 52px max(36px, calc((100% - 620px) / 2)) 72px;
+}
+
+.simple-page > header {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 28px;
+}
+
+.simple-page h1 {
+	margin: 0;
+	color: var(--text-strong);
+	font-size: var(--text-page);
+	font-weight: 500;
+	letter-spacing: -0.02em;
+}
+
+.simple-page header p {
+	margin: 7px 0 0;
+	color: var(--text-muted);
+	font-size: var(--text-md);
+	line-height: 1.6;
+}
+
+.outline-button {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	flex-shrink: 0;
+	padding: 8px 12px;
+	color: var(--text);
+	background: var(--surface-raised);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius);
+	font-size: var(--text-md);
+}
+
+.outline-button:hover {
+	background: var(--surface-soft);
+}
+
+.empty-state {
+	display: grid;
+	place-items: center;
+	align-content: center;
+	min-height: 320px;
+	color: var(--text-faint);
+	text-align: center;
+}
+
+.empty-state svg {
+	color: var(--border-strong);
+}
+
+.empty-state h2 {
+	margin: 17px 0 6px;
+	color: var(--text-muted);
+	font-size: var(--text-title);
+	font-weight: 500;
+}
+
+.empty-state p {
+	max-width: 400px;
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--text-md);
+	line-height: 1.7;
+}

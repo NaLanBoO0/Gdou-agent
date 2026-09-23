@@ -1,0 +1,355 @@
+<!doctype html>
+<html lang="zh-CN" data-app-theme="light">
+	<head>
+		<meta charset="utf-8" />
+		<meta
+			http-equiv="Content-Security-Policy"
+			content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:"
+		/>
+		<title>GDOU agent</title>
+		<link rel="stylesheet" href="tokens.css" />
+		<link rel="stylesheet" href="shell.css" />
+		<link rel="stylesheet" href="chat.css" />
+		<link rel="stylesheet" href="panels.css" />
+	</head>
+	<body>
+		<div class="sztu-shell" id="shell">
+			<!-- The window is frameless, so this bar is the window chrome. -->
+			<header class="titlebar">
+				<span class="window-mark"></span>
+
+				<div class="nav-toggle-wrap">
+					<button id="nav-toggle" class="nav-toggle" type="button" aria-label="收起 / 展开侧栏" title="收起 / 展开侧栏">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round">
+							<path d="M3 6h18M3 12h18M3 18h18" />
+						</svg>
+					</button>
+				</div>
+
+				<nav class="app-menu-bar" id="app-menu-bar">
+					<div class="app-menu-item">
+						<button type="button" data-menu="file" aria-expanded="false">文件</button>
+						<div class="app-menu-popover" id="menu-file" hidden>
+							<button type="button" data-command="new-chat">新对话<kbd>Ctrl+N</kbd></button>
+							<button type="button" data-command="pick-cwd">打开工作目录…</button>
+							<div class="app-menu-separator"></div>
+							<button type="button" data-command="quit">退出</button>
+						</div>
+					</div>
+					<div class="app-menu-item">
+						<button type="button" data-menu="view" aria-expanded="false">视图</button>
+						<div class="app-menu-popover" id="menu-view" hidden>
+							<button type="button" data-command="view-chat">对话<kbd>Ctrl+1</kbd></button>
+							<button type="button" data-command="view-experts">专家<kbd>Ctrl+2</kbd></button>
+							<button type="button" data-command="view-automation">自动化<kbd>Ctrl+3</kbd></button>
+							<button type="button" data-command="view-skills">Skills<kbd>Ctrl+4</kbd></button>
+							<div class="app-menu-separator"></div>
+							<button type="button" data-command="toggle-inspector">显示 / 隐藏检查器</button>
+							<button type="button" data-command="toggle-theme">切换深浅色</button>
+						</div>
+					</div>
+					<div class="app-menu-item">
+						<button type="button" data-menu="help" aria-expanded="false">帮助</button>
+						<div class="app-menu-popover" id="menu-help" hidden>
+							<button type="button" data-command="diagnostics">构建链路自检</button>
+							<div class="app-menu-separator"></div>
+							<button type="button" data-command="about">关于 GDOU agent</button>
+						</div>
+					</div>
+				</nav>
+
+				<div class="titlebar-drag-region"></div>
+
+				<div class="window-actions">
+					<button id="win-minimize" class="window-action" type="button" aria-label="最小化">
+						<svg width="10" height="10" viewBox="0 0 10 10"><path d="M0 5h10" stroke="currentColor" stroke-width="1" /></svg>
+					</button>
+					<button id="win-maximize" class="window-action" type="button" aria-label="最大化">
+						<svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1">
+							<rect x="0.5" y="0.5" width="9" height="9" rx="1" />
+						</svg>
+					</button>
+					<button id="win-close" class="window-action window-action--close" type="button" aria-label="关闭">
+						<svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1">
+							<path d="M0 0l10 10M10 0L0 10" />
+						</svg>
+					</button>
+				</div>
+			</header>
+
+			<aside class="sidebar" id="sidebar">
+				<div class="mode-switch" id="mode-switch"></div>
+
+				<nav class="primary-nav" id="primary-nav">
+					<button type="button" data-view="chat" class="active">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M21 11.5a8.4 8.4 0 0 1-9 8.4 9.1 9.1 0 0 1-3.3-.6L3 21l1.7-5A8.4 8.4 0 0 1 12 3.1a8.4 8.4 0 0 1 9 8.4Z" />
+						</svg>
+						对话<kbd>Ctrl+1</kbd>
+					</button>
+					<button type="button" data-view="experts">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 3l2.5 5.5L20 10l-4 4 1 6-5-2.8L7 20l1-6-4-4 5.5-1.5Z" />
+						</svg>
+						专家<kbd>Ctrl+2</kbd>
+					</button>
+					<button type="button" data-view="automation">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
+						</svg>
+						自动化<kbd>Ctrl+3</kbd>
+					</button>
+					<button type="button" data-view="skills">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5ZM20 5.5A1.5 1.5 0 0 0 18.5 4H14v16h4.5a1.5 1.5 0 0 0 1.5-1.5Z" />
+						</svg>
+						Skills<kbd>Ctrl+4</kbd>
+					</button>
+				</nav>
+
+				<section class="side-section conversations">
+					<span class="side-label side-label--action">
+						对话记录
+						<button id="new-chat-inline" type="button" title="新对话">
+							<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+								<path d="M12 5v14M5 12h14" />
+							</svg>
+						</button>
+					</span>
+					<div class="conversation-list scroll-thin" id="conversation-list"></div>
+				</section>
+
+				<div class="sidebar-footer">
+					<div class="account">
+						<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<rect x="3" y="4" width="18" height="16" rx="3" /><path d="M8 10h8M8 14h5" />
+						</svg>
+						<span>
+							<b id="footer-model">未启动</b>
+							<small id="footer-cwd">—</small>
+						</span>
+					</div>
+					<button id="theme-toggle" class="settings-link" type="button" title="切换深浅色">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="4.2" /><path d="M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19" />
+						</svg>
+					</button>
+					<button id="diag-toggle" class="settings-link" type="button" title="构建链路自检">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="3.2" />
+							<path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.2-2.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.2a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4Z" />
+						</svg>
+					</button>
+				</div>
+			</aside>
+
+			<main class="main" id="main">
+				<!-- ------------------------------------------------------ chat -->
+				<section class="view" id="view-chat">
+					<div class="work-header">
+						<!-- The icon sits outside the button so `#cwd`'s textContent is
+						     exactly the directory. check:gui asserts on that string, and an
+						     icon inside the button contributes whitespace text nodes. -->
+						<div class="workspace-pill">
+							<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h3.6l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></svg>
+							<button id="cwd" class="workspace-trigger" type="button" title="切换工作目录">选择工作目录</button>
+						</div>
+
+						<div class="work-header__tools">
+							<select id="profile" class="picker" aria-label="模式"></select>
+							<select id="expert" class="picker" aria-label="专家"></select>
+							<button id="new-chat" class="ghost" type="button">新对话</button>
+							<div class="menu-wrap">
+								<button id="history-toggle" class="ghost" type="button">历史</button>
+								<div id="history-menu" class="menu scroll-thin" hidden></div>
+							</div>
+						</div>
+					</div>
+
+					<div class="work-layout" id="work-layout">
+						<div class="task-canvas">
+							<div class="task-stream scroll-hidden" id="stream">
+								<div class="transcript">
+									<div class="empty" id="empty">
+										<div class="hero">
+											<div class="mascot">G</div>
+											<div>
+												<h1>GDOU agent</h1>
+												<p>基于 pi 内核的自定义 agent</p>
+											</div>
+										</div>
+										<p class="empty-hint" id="empty-hint">正在准备…</p>
+										<div class="empty-suggestions" id="empty-suggestions"></div>
+									</div>
+								</div>
+							</div>
+
+							<footer class="composer-wrap">
+								<div class="status-line">
+									<span id="status-text"></span>
+								</div>
+								<div id="expert-warning" class="expert-warning" hidden></div>
+								<form class="sztu-composer" id="composer">
+									<textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>
+									<div class="composer-toolbar">
+										<span></span>
+										<div class="model-label"><i id="model-dot"></i><span id="model-label"></span></div>
+										<button id="send" class="send" type="submit" aria-label="发送">
+											<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+												<path d="M12 19V5M6 11l6-6 6 6" />
+											</svg>
+										</button>
+										<button id="abort" class="send stop" type="button" hidden aria-label="中止">
+											<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+										</button>
+									</div>
+								</form>
+							</footer>
+						</div>
+
+						<div class="layout-divider" id="layout-divider"></div>
+
+						<aside class="inspector-panel scroll-thin" id="inspector">
+							<section>
+								<h2>交付产物</h2>
+								<div id="artifacts"></div>
+							</section>
+							<section>
+								<h2>本次会话</h2>
+								<ul id="inspector-session"></ul>
+							</section>
+							<section>
+								<h2>上下文</h2>
+								<div id="inspector-context"></div>
+							</section>
+							<section>
+								<h2>可用工具</h2>
+								<ul class="tool-chip-list" id="inspector-tools"></ul>
+								<p class="inspector-empty" id="inspector-tools-note"></p>
+							</section>
+						</aside>
+					</div>
+				</section>
+
+				<!-- --------------------------------------------------- experts -->
+				<section class="view" id="view-experts" hidden>
+					<div class="simple-page scroll-thin">
+						<header>
+							<div>
+								<h1>专家</h1>
+								<p>
+									一个有名字的方法论。模式决定 agent <b>能</b>做什么，专家决定它<b>该怎么想</b>。
+									专家只能<b>收窄</b>工具集，永远不会让它多拿到一个工具。
+								</p>
+							</div>
+							<button class="outline-button" type="button" id="experts-refresh">重新扫描</button>
+						</header>
+						<div class="expert-grid" id="experts"></div>
+						<div id="expert-paths"></div>
+					</div>
+				</section>
+
+				<!-- ------------------------------------------------ automation -->
+				<section class="view" id="view-automation" hidden>
+					<div class="simple-page scroll-thin">
+						<header>
+							<div>
+								<h1>自动化</h1>
+								<p>存下来的任务：一个配方 + 一段提示词 + 一个触发时机。</p>
+							</div>
+						</header>
+						<div class="planned-card">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+								<circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" />
+							</svg>
+							<div>
+								<h2>还没做</h2>
+								<p>
+									组合模型已经就位，所以自动化的前两样——配方和提示词——现在都有了。
+									它缺的只是调度和产出。按已定的方案：
+								</p>
+								<ul>
+									<li><b>只做运行时触发</b>：关掉程序就不跑，界面上会明说，而不是让你以为它一直在跑。</li>
+									<li><b>产出是单独一个概念</b>，不混进「对话记录」，这样它和手动对话不会互相淹没。</li>
+									<li><b><code>allowWrite</code> 默认关闭</b>：无人值守的工具调用就是一个远程代码执行面，要放开必须逐条显式打开。</li>
+								</ul>
+								<span class="status-pill">待做</span>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<!-- ---------------------------------------------------- skills -->
+				<section class="view" id="view-skills" hidden>
+					<div class="simple-page scroll-thin">
+						<header>
+							<div>
+								<h1>Skills</h1>
+								<p>可以按需加载的说明，外加它需要的资源文件。</p>
+							</div>
+						</header>
+						<div class="planned-card">
+							<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+								<path d="M4 5.5A1.5 1.5 0 0 1 5.5 4H10v16H5.5A1.5 1.5 0 0 1 4 18.5ZM20 5.5A1.5 1.5 0 0 0 18.5 4H14v16h4.5a1.5 1.5 0 0 0 1.5-1.5Z" />
+							</svg>
+							<div>
+								<h2>还没做</h2>
+								<p>
+									这是三个功能里唯一真正新的机制：<b>渐进式披露</b>。会话开始时上下文里只有每个
+									skill 的名字和一句话描述，任务匹配后 agent 才把正文读进来。
+								</p>
+								<ul>
+									<li><b>不这么做就是矛盾的</b>：几十个 skill 的全文塞进系统提示就是几十万 token，正好把上下文裁剪省下来的预算又花回去。</li>
+									<li><b>只允许说明和资源文件</b>，不允许可执行脚本——否则「安装一个 skill」就等于「安装一段可执行代码」。</li>
+									<li>需要新增两个内核工具（列出、加载），所以它会动到工具层。</li>
+								</ul>
+								<span class="status-pill">待做</span>
+							</div>
+						</div>
+					</div>
+				</section>
+
+				<!-- ----------------------------------------------- diagnostics -->
+				<section class="panel scroll-thin" id="diagnostics" hidden>
+					<div class="panel-head">
+						<h2>构建链路自检</h2>
+						<button id="diag-close" class="outline-button" type="button">返回</button>
+					</div>
+
+					<div id="status" class="status status--wait">正在读取内核状态…</div>
+
+					<div class="card">
+						<h2>运行时</h2>
+						<dl class="kv" id="versions"></dl>
+					</div>
+					<div class="card">
+						<h2>路径</h2>
+						<dl class="kv" id="paths"></dl>
+					</div>
+					<div class="card">
+						<h2>托管二进制</h2>
+						<dl class="kv" id="binaries"></dl>
+					</div>
+					<div class="card">
+						<h2>模式</h2>
+						<ul class="profiles" id="profiles"></ul>
+					</div>
+					<div class="card">
+						<h2>模型</h2>
+						<dl class="kv" id="models"></dl>
+					</div>
+					<div class="card">
+						<h2>内核探测</h2>
+						<div class="probe" id="agent"></div>
+					</div>
+					<div class="card">
+						<h2>凭据</h2>
+						<pre class="credentials" id="credentials"></pre>
+					</div>
+				</section>
+			</main>
+		</div>
+
+		<script src="app.js"></script>
+	</body>
+</html>

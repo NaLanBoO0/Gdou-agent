@@ -1,0 +1,221 @@
+/**
+ * Design tokens.
+ *
+ * The palette, type scale and metrics are ported from the SztuCode desktop app
+ * so the two look like the same product. Light is the default because that is
+ * SztuCode's default; dark is a real theme rather than an inversion, with its
+ * own surfaces and borders.
+ *
+ * Every colour used anywhere in the shell is a token here. A literal hex
+ * further down the cascade is how a theme ends up with three slightly
+ * different greys that only show up in dark mode.
+ */
+
+:root {
+	color-scheme: light;
+
+	/* Type */
+	--font: "Microsoft YaHei UI", "PingFang SC", "Segoe UI", system-ui, sans-serif;
+	--mono: "SFMono-Regular", Consolas, "Cascadia Mono", monospace;
+	--text-xs: 10px;
+	--text-sm: 11px;
+	--text-base: 12px;
+	--text-md: 13px;
+	--text-lg: 14px;
+	--text-title: 15px;
+	--text-page: 22px;
+	--text-hero: 28px;
+
+	/* Text */
+	--text: #202124;
+	--text-strong: #151619;
+	--text-muted: #6d7178;
+	--text-faint: #989ba0;
+	--text-inverse: #fff;
+
+	/* Surfaces */
+	--surface: #f7f9fa;
+	--surface-raised: #fff;
+	--surface-soft: #eef0f2;
+	--surface-sunken: #fbfcfc;
+	--surface-hover: #e9ecee;
+
+	/* Lines */
+	--border: #dfe1e4;
+	--border-soft: #e7e9eb;
+	--border-strong: #d9dadd;
+
+	/* Accent and status */
+	--accent: #3383e8;
+	--accent-strong: #1877f2;
+	--accent-contrast: #fff;
+	--accent-soft: #edf5ff;
+	--ok: #48a366;
+	--ok-text: #37764f;
+	--ok-soft: #eaf7ee;
+	--warn: #bb8520;
+	--warn-text: #8d7950;
+	--warn-soft: #fff8e9;
+	--danger: #c42b1c;
+	--danger-text: #b3261e;
+	--danger-soft: #fdf0f1;
+
+	/* Shadow */
+	--shadow-card: 0 3px 10px rgb(24 34 46 / 4%);
+	--shadow-pop: 0 14px 36px rgb(18 24 32 / 16%), 0 3px 10px rgb(18 24 32 / 8%);
+	--shadow-menu: 0 8px 25px rgb(35 38 44 / 11%);
+
+	/* Metrics.
+	   Names here must match every `var()` use exactly. A typo does not fail
+	   loudly: the declaration using it becomes invalid at computed-value time
+	   and falls back to the initial value, so `grid-template-columns` silently
+	   becomes a single column. */
+	--titlebar-h: 52px;
+	--sidebar-w: 240px;
+	--inspector-width: 380px;
+	--radius-sm: 6px;
+	--radius: 9px;
+	--radius-lg: 17px;
+
+	/* Motion */
+	--ease: cubic-bezier(0.4, 0, 0.2, 1);
+	--speed: 160ms;
+}
+
+[data-app-theme="dark"] {
+	color-scheme: dark;
+
+	--text: #e4e6e8;
+	--text-strong: #f4f5f6;
+	--text-muted: #9aa0a7;
+	--text-faint: #6f757c;
+	--text-inverse: #16181b;
+
+	--surface: #17191c;
+	--surface-raised: #1e2125;
+	--surface-soft: #24272b;
+	--surface-sunken: #1a1d20;
+	--surface-hover: #2a2e33;
+
+	--border: #2e3237;
+	--border-soft: #262a2e;
+	--border-strong: #3a3f45;
+
+	--accent: #5b9dfb;
+	--accent-strong: #7ab0ff;
+	--accent-contrast: #10131a;
+	--accent-soft: #1c2836;
+	--ok: #5cb87a;
+	--ok-text: #7fd39a;
+	--ok-soft: #16281c;
+	--warn: #d9a84a;
+	--warn-text: #e0bb6f;
+	--warn-soft: #2b2417;
+	--danger: #e06055;
+	--danger-text: #f08d84;
+	--danger-soft: #2d1a18;
+
+	--shadow-card: 0 3px 10px rgb(0 0 0 / 26%);
+	--shadow-pop: 0 14px 36px rgb(0 0 0 / 46%), 0 3px 10px rgb(0 0 0 / 26%);
+	--shadow-menu: 0 8px 25px rgb(0 0 0 / 40%);
+}
+
+* {
+	box-sizing: border-box;
+}
+
+/* Uses the available client height rather than 100vh, so a scaled display or a
+   self-drawn titlebar cannot push the composer out of the window. */
+html,
+body {
+	height: 100%;
+	min-height: 0;
+	margin: 0;
+	overflow: hidden;
+	background: transparent;
+}
+
+body {
+	min-width: 680px;
+	color: var(--text);
+	font: var(--text-lg) / 1.5 var(--font);
+	-webkit-font-smoothing: antialiased;
+}
+
+button,
+input,
+select,
+textarea {
+	color: inherit;
+	font: inherit;
+}
+
+button {
+	padding: 0;
+	background: none;
+	border: 0;
+	cursor: pointer;
+}
+
+button:disabled {
+	cursor: not-allowed;
+	opacity: 0.48;
+}
+
+/* Focus is drawn on keyboard navigation only: a mouse click that leaves a ring
+   behind reads as a stuck state. */
+:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
+kbd {
+	padding: 1px 4px;
+	color: var(--text-faint);
+	background: var(--surface-soft);
+	border-radius: 3px;
+	font: var(--text-base) var(--mono);
+}
+
+/* Scrollbars: 6px, invisible until the container is hovered, so a panel does not
+   trade content width for a permanent grey stripe. */
+.scroll-thin {
+	scrollbar-width: thin;
+	scrollbar-color: transparent transparent;
+}
+
+.scroll-thin:hover {
+	scrollbar-color: rgb(120 130 145 / 22%) transparent;
+}
+
+.scroll-thin::-webkit-scrollbar {
+	width: 6px;
+	height: 6px;
+}
+
+.scroll-thin::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.scroll-thin::-webkit-scrollbar-thumb {
+	background: transparent;
+	border-radius: 3px;
+}
+
+.scroll-thin:hover::-webkit-scrollbar-thumb {
+	background: rgb(120 130 145 / 22%);
+}
+
+.scroll-thin::-webkit-scrollbar-thumb:hover {
+	background: rgb(120 130 145 / 45%);
+}
+
+/* The transcript hides its scrollbar entirely: position is given by the newest
+   message being in view, not by a thumb. */
+.scroll-hidden {
+	scrollbar-width: none;
+}
+
+.scroll-hidden::-webkit-scrollbar {
+	display: none;
+}

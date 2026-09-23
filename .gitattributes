@@ -1,0 +1,26 @@
+# Line endings, and why they are not a style preference here.
+#
+# `core.autocrlf=true` is the Windows default, and it would check these files
+# out with CRLF. That breaks `check:vendor`, which verifies `vendor/pi` against
+# a sha256 manifest: a line-ending conversion changes every hash in it, so the
+# guard would fail on a fresh clone while passing on the machine that produced
+# it — the worst kind of failure, because it only shows up for other people.
+#
+# Forcing LF in the working tree makes the bytes identical on every platform,
+# which is the assumption the manifest is built on.
+* text=auto eol=lf
+
+# Batch files are the one format that genuinely requires CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Never converted, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.exe binary
+*.7z binary
+*.zip binary

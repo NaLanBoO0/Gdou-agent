@@ -1,0 +1,48 @@
+# electron-builder configuration.
+#
+# Only `dist/` ships. There are no runtime dependencies to resolve: esbuild
+# inlines the pi kernel and every library it needs into `dist/main.mjs`, so the
+# installer carries the bundle plus Electron itself and nothing else.
+
+appId: com.gdou.agent
+productName: GDOU agent
+executableName: GDOU-agent
+
+directories:
+  output: release
+
+files:
+  - dist/**/*
+  - package.json
+
+# ripgrep and fd, so the coding tools work on a machine without internet.
+#
+# They go beside the asar rather than inside it: they are executed, and a
+# spawned process cannot run a binary out of an archive. `npm run package`
+# fetches them first, so this directory is populated before packaging starts.
+extraResources:
+  - from: vendor/bin
+    to: bin
+    filter:
+      - "**/*"
+
+# Nothing else is read from disk at runtime that is not already a module, so no
+# other unpacked exceptions are needed.
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: GDOU-agent-${version}-setup.${ext}
+
+nsis:
+  # A per-user install needs no elevation, which matters for a tool that writes
+  # only to the user's own home directory.
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: GDOU agent

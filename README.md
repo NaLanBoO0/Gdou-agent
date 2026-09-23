@@ -1,0 +1,648 @@
+# GDOU agent
+
+基于 pi 内核（`pi-ai` + `pi-agent-core` + `pi-coding-agent`）构建的自定义 agent。
+
+目前内置两种模式：**general**（日常任务，不碰文件）和 **coding**（仓库开发）。
+内核与模式解耦，所以新增第三种模式只需要写一个文件，不用动内核。
+
+一个会话 = **模式 + 可选专家**。模式决定 agent **能**做什么（工具集、基础提示），专家决定它
+**该怎么想**（方法论）。两者正交，可以叠加，例如「coding 模式 + 安全审计专家」。
+**专家只能收窄工具集，不能扩大**——它是用户自己写的 markdown 文件，如果它能加工具，
+"装个专家"就变成了"装个后门"。随包提供三个示例专家（见 `--list-experts`）。
+
+三种入口：无界面 CLI、终端 TUI、桌面 GUI（可打包成 exe 安装包）。
+三者都建立在同一个内核之上，共用同一套归一化事件流。
+
+[`FEATURES.md`](FEATURES.md) 是功能清单：在 pi 内核之上加了什么、每一项怎么实现的、
+以及那些不想再踩一次的坑。
+
+[`DESIGN.md`](DESIGN.md) 是待做功能的**设计方案**（自动化项目 / 专家 / skills），
+用来讨论而不是执行——里面有需要拍板的问题。
+
+[`docs/workbuddy对齐清单.md`](docs/workbuddy对齐清单.md) 是**差距账目**：
+对标 WorkBuddy 的 15 类能力逐条列出「它怎么做 / 我们有什么」，并给出优先级。
+要做新功能之前先看它——**优先级本身就是结论**，顺序错了会付两次代价。
+
+## 快速开始
+
+```bash
+# 1. 装依赖。pi 的源码已经在 vendor/pi 里，不需要任何外部 checkout
+npm install
+
+# 2. 选一家 provider，设置对应的 key（任选其一）
+export DEEPSEEK_API_KEY=sk-...        # DeepSeek
+export MOONSHOT_API_KEY=sk-...        # Moonshot / Kimi
+export ZAI_API_KEY=...                # 智谱 GLM
+export QWEN_TOKEN_PLAN_API_KEY=...    # 通义 Qwen
+
+# 3. 验证接线是否正确（不消耗额度）
+npm run check
+
+# 4. 检查环境和凭据状态
+npm run run -- --doctor
+
+# 5. 启动交互界面（会先问你用哪个模式）
+npm run run
+
+# 6. 或者直接无界面跑
+npm run run -- -p general "what is the time in Tokyo?"
+npm run run -- -p coding "summarize this repository"
+```
+
+PowerShell 里设置 key 的写法是 `$env:DEEPSEEK_API_KEY="sk-..."`。
+
+## TUI 界面
+
+在交互式终端里不带 prompt 启动，就会进入对话界面。
+
+```
+GDOU agent  built on the pi kernel
+
+ctrl+o last tool · ctrl+t all tools · ctrl+l clear · ctrl+c exit · enter send · shift+enter newline
+
+› summarize the changes in src/kernel
+
+⏺ read src/kernel/agent.ts
+  │ import { Agent, type AgentMessage } from "@earendil-works/pi-agent-core";
+  │ ...
+  └ … 148 more · 154 lines total · ctrl+o to expand
+
+The session is assembled in one place. `createAgent` resolves the runtime,
+asks the profile for its prompt and tools, and returns an `AgentSession`…
+
+TUI probe · deepseek/deepseek-flash · C:\Users\Na1aB\Desktop\gdou-agent
+```
+
+> 上面这段是程序实际输出的原文，所以界面文字目前是英文。如果需要把界面本身
+> 汉化，那是另一处改动（`src/tui/` 里的字面量），跟本文档的语言无关。
+
+| 按键 | 行为 |
+|---|---|
+| `enter` | 发送 |
+| `shift+enter` / `ctrl+j` | 换行 |
+| `ctrl+o` | 展开或折叠最近一次工具调用 |
+| `ctrl+t` | 展开或折叠全部工具调用 |
+| `ctrl+l` | 清空 transcript |
+| `ctrl+c` | 中止当前这一轮；再按一次退出 |
+| `ctrl+d` | 输入为空时退出 |
+
+四个设计决定：
+
+**用主屏，不用备用屏。** transcript 落在终端自己的 scrollback 里，所以原生滚动、
+搜索、复制全都能用。备用屏会拿这三样换一个固定视口——对一个输出要被复制走的助手
+来说，这是错的取舍。
+
+**工具输出默认折叠。** 一次 `read` 读大文件、或者一次 `bash` 调用，都可能吐几百行；
+铺开就把答案埋了。折叠视图显示的是**尾部**而不是头部，因为错误出现在输出末尾。
+
+**工具运行期间输出是流式的。** 长命令会显示进度，而不是卡住不动。更新通过
+`tool_update` 事件送达——这也是为什么归一化层要把部分结果和最终结果分开表达。
+
+**渲染只依赖 `AgentEvent`。** 没有任何视图 import pi 的类型，所以 pi 可以在底层
+升级而不波及表现层。
+
+### TUI 目录
+
+```
+src/tui/
+  index.ts                    入口：TTY 检查、模式选择器、交接
+  app.ts                      订阅路由、按键、生命周期
+  theme.ts                    窄 token 集；深色与浅色
+  components/
+    transcript.ts             有界条目列表；工具视图记账
+    tool-call.ts              可折叠的工具调用，带实时输出
+    messages.ts               用户轮与助手轮
+    notice.ts                 横幅、错误、预着色文本块
+    status-line.ts            模式、模型、工作目录、瞬时提示
+    profile-picker.ts         启动时的模式选择
+```
+
+## 桌面 GUI
+
+```bash
+# 起窗口（会先自动构建）
+npm run gui
+
+# 出安装包 → release/GDOU-agent-0.1.0-setup.exe
+npm run package
+```
+
+**跑打包产物而不安装**：`npm run package:dir` 出 `release/win-unpacked/GDOU-agent.exe`，是一个自包含的应用目录，双击即可运行。让桌面快捷方式指向它：
+
+```bash
+npm run shortcut
+```
+
+这一步值得说明。`npm run package` 生成的安装包会把快捷方式指向 `%LOCALAPPDATA%\Programs\...`，那是**打包那一刻的快照**——源码继续往前走之后，快捷方式会静默地一直启动旧版本，界面上看不出任何异常。`npm run shortcut` 改成指向项目里的 `release/win-unpacked`，于是只有一份应用，就在这个文件夹里。
+
+打包时的二进制下载默认走 GitHub。国内网络下拉不到，失败信息还很有误导性（见 FEATURES.md 4.7）。`scripts/package.mjs` 因此默认指向 npmmirror；环境变量里显式设了 `ELECTRON_MIRROR` / `ELECTRON_BUILDER_BINARIES_MIRROR` 时以你的为准。
+
+内核跑在 Electron **主进程内**，不是 sidecar 进程，也不是本地 HTTP 服务。因为内核本来就是 Node/TS，而 Electron 主进程就是 Node——`createAgent()` 原样调用，**内核一行没改**。
+
+渲染进程与内核之间只有一条窄通道：
+
+```
+AgentSession.subscribe(AgentEvent) → webContents.send → preload contextBridge → 渲染进程
+```
+
+安全默认值按 Electron 的推荐收紧：`contextIsolation: true`、`nodeIntegration: false`，preload 只暴露几个具名函数而不是整个 `ipcRenderer`。
+
+### 界面
+
+外壳照 [SztuCode](https://github.com/) 的工作台重做：52px 自绘标题栏 + 240px 侧栏 + 主区，右侧是可拖拽宽度的检查器。窗口是**无边框**的，标题栏就是窗口边框。
+
+```
+标题栏   窗口标记 · 汉堡 · 文件/视图/帮助 · 拖拽区 · 最小化/最大化/关闭
+侧栏     模式切换 · 对话/专家/自动化/Skills · 对话记录 · 底部状态与主题
+主区     工作目录 · 模式/专家选择 · 新对话/历史
+         时间线（735px 居中） · 检查器
+         输入框（Enter 发送 / Shift+Enter 换行，可中止）
+```
+
+截图在 [`docs/screenshots/`](docs/screenshots)。
+
+**检查器**显示本次会话（模式/专家/模型/工具数/工作目录）、上下文占用（条 + 字符数 + 进度条）、以及**这个会话实际能用的工具名**。最后一项是重点：专家会收窄工具集，而"工具不见了"和"专家没生效"从外面看是一样的。
+
+**专家页**把专家做成卡片，点一下就带着它开新会话。**自动化**和 **Skills** 是诚实的待做页——说明会怎么做、以及已经定下的约束，而不是留一个读起来像坏了的空白页。
+
+快捷键：`Ctrl+1..4` 切视图，`Ctrl+N` 新对话，`Ctrl+B` 收侧栏，`Ctrl+I` 切检查器。
+
+深浅两套主题：首次启动跟随系统，手动切换后记住。
+
+**一次只跑一个会话。** 切换模式或专家会拆掉旧会话，而不是同时跑两个：配方决定系统提示和工具集，同时跑两个意味着这段对话不再描述同一个 agent。
+
+### 对话会留下来
+
+关掉窗口不再等于丢掉对话，开一个新话题也不再冲掉上一段。一段对话一个文件，存在
+`~/.gdou-agent/sessions/`，启动时自动打开最近的一段，状态行会标出恢复了多少条消息。
+
+右上角的「历史」列出所有对话——标题取自每段的第一条用户消息，带相对时间和消息条数——
+点一条切过去，点「改名」改标题，点 × 删掉。「新对话」开始新的一段，**旧的那段留在列表里**。
+
+改名是行内编辑：Enter 提交、Escape 取消、失焦也提交。**空标题会被忽略**——清空会留下一行
+没东西可点的记录，而且派生标题再也拿不回来了。改名只换标签，消息一条不少。
+
+**模式仍然是恢复时的约束**：一段 coding 对话在 general 模式下打不开，因为模式决定系统提示
+和工具集，恢复出来会是一段这个 agent 从未产出过的记录。
+
+每个文件是**两行 JSON**：
+
+```
+{"id":...,"title":...,"updatedAt":...,"messageCount":...}
+{"version":1,...,"messages":[...]}
+```
+
+第一行是摘要。列会话表只读这一行，所以列出很长的对话不等于把每段对话整个读进来——一段工具
+输出里带着文件内容的记录可以到几 MB，而列表是随手点开的。
+
+恢复的做法是把历史**转成事件**再交给界面，而不是把原始消息直接丢过去：
+
+```
+存储的 messages  →  replay()  →  AgentEvent[]  →  渲染层
+```
+
+这样"实时运行"和"恢复历史"共用同一条渲染路径，不会随着界面演进而漂移。代价是事件词表里多了一个
+`user_message`——实时运行不发它（前端自己加气泡，这样即使运行根本没启动，你的消息也还在），
+只有回放会发。
+
+写入用临时文件加 rename，所以中断的写入不会在下次启动时变成半截文件。文件损坏或版本不符时会被
+移到一边（`.corrupt`）而不是删掉。早期版本用的是「每个模式一份滚动会话」，启动时会自动迁移过来。
+
+### 长对话会被裁剪（但记录不会）
+
+每轮请求都会把整段消息列表发给模型，所以一段很长的对话最终会撞上 provider 的上下文上限。
+pi 的简单 `Agent` 不做压缩，但留了 `transformContext` 这个接缝——它的文档注释点名用途就是
+"pruning old messages"，而且它作用在发给模型的那一份上，`state.messages` 不受影响。
+
+所以：
+
+```
+state.messages      →  完整记录（界面显示、落盘）—— 不动
+transformContext    →  只改发给模型的那一份 —— 裁剪在这里
+```
+
+**你能往上翻的对话始终是完整的**，而模型被要求考虑的部分有上界（默认 1 MB 序列化字符，
+远低于任何目标模型的窗口）。
+
+裁剪点**只能落在用户消息之前**。这是唯一安全的位置——落在别处会出现没有对应调用的工具结果，
+provider 会直接判为畸形对话。找不到安全裁点时宁可不裁。
+
+**代价要说清楚：模型是真的忘了。** 旧轮次不是被摘要，而是从它的视野里消失。所以屏幕上的记录
+和模型的工作集不是一回事。`npm run run -- --doctor` 会打印这个上限。
+
+因为裁剪在构造上不可见，**跨越预算时界面上会出现一条提示**：
+
+```
+对话已超出上下文上限，模型现在只能看到最近 N 条消息。上面的记录不受影响，仍然完整。
+```
+
+只在跨越的那一次出现，不是每轮都刷。它刻意不按错误样式呈现——这不是故障，标红只会让人学会忽略它。
+
+**还有一个常驻指示器**：裁剪生效时状态行会追加 `· 模型可见 2/6 条`。
+
+```
+general · deepseek/deepseek-flash · 3 个工具 · 模型可见 2/6 条
+```
+
+它**只在真的裁剪时出现**——一个常驻的徽标会变成家具，而家具不会被阅读。它报的是**上一次请求模型实际看到了什么**，不是"下一次会发什么"：后者看起来更自然，但会因为裁剪在预算过小时切换状态而和刚显示的提示自相矛盾。
+
+`GDOU_CONTEXT_BUDGET` 可以覆盖预算（字符数），用上下文窗口小的模型时可以压低。
+
+### 工作目录
+
+状态行右侧显示当前工作目录，点击可以换。选择会存进 `settings.json`，下次启动沿用。
+
+默认值**不是** `process.cwd()`：打包后的应用从开始菜单启动，进程目录是 shell 恰好所在的位置，对一个要读写文件的工具来说那不是个有意义的答案。默认取用户主目录——一个可预测的目录好过一个随机的目录。
+
+换目录会按新目录重建会话（对话历史会重新画出来，不会丢）。选到不是目录的路径会被拒绝，并保持原目录不变。
+
+### 没有 API key 也能看到界面
+
+**装上之后直接就能用**：没有凭据时启动会话会失败，错误下面会出现一个「用脚本化运行预览」按钮。点它就能跑一轮——流式文本、一次真实的工具调用、收尾文本，状态行会标明「脚本化运行」。
+
+预览**从空白开始**（不接在真实对话后面），并且**不写进历史**——它是演示，不是对话。
+
+开发时也可以直接用环境变量：
+
+```bash
+# macOS / Linux
+GDOU_SCRIPTED_RUN=1 npm run gui
+
+# Windows PowerShell
+$env:GDOU_SCRIPTED_RUN=1; npm run gui
+```
+
+两者用的是同一个传输，但只有按钮触发的那次算「预览」——环境变量是开发者开关，它的运行是普通会话，会正常落盘。
+
+它同时也是一处**测试接缝**：`check:gui` 的对话流程断言就跑在它上面，不需要 key、不需要网络。GUI 里只在运行期间存在的那些部分（文本流式进入、工具调用出现并填入输出）是最容易静默坏掉的，而这个模式让它们每次都被真实走一遍。
+
+### 构建产物是 CommonJS
+
+`npm run build` 产出 `dist/main.cjs`、`dist/preload.cjs`、`dist/cli.cjs`，全部是 CJS。
+
+不是偏好，是踩出来的：Electron 把 `electron` 模块当 CJS 交给 ESM 加载器，命名导出靠静态分析合成，而**在 bundle 里这个合成不可靠**——`import { BrowserWindow } from "electron"` 会在链接期直接抛错，且成不成功取决于 bundle 里还有什么别的东西。`require("electron")` 不涉及互操作，永远可用。
+
+CJS 缺的只有 `import.meta.url`（本项目 `paths.ts` 和 pi 的 `config.ts` 都在模块顶层用它），构建脚本用 `define` + banner 把它还原成真实文件 URL。这个 banner **不能加给 preload**：preload 跑在沙箱渲染进程里，那里的 `require` 加载不到 `node:url`，加了会让 preload 静默失效。
+
+渲染进程同样**刻意零构建**：它是一个没有 import 的经典脚本，所以能从 `file://` 直接加载。ES module 的 import 在 `file://` 下不工作（Chromium 会拦），这就是它没被拆成模块的原因。
+
+### 状态隔离
+
+pi 的 coding 工具（`grep` / `find`）会调用 ripgrep 和 fd，由 pi 在首次使用时下载。下载位置默认是 `~/.pi/agent/bin`——**pi 自己的目录**。本项目通过 `package.json` 里的 `piConfig` 把它挪到 `~/.gdou-agent/agent/bin`：
+
+```json
+"piConfig": { "name": "gdou", "configDir": ".gdou-agent" }
+```
+
+`npm run run -- --doctor` 会把 `tool bin dir` 和 rg/fd 是否就位打出来（它会真的执行这两个二进制，因为"文件在"和"能跑"是两回事）。GUI 自检也会断言这个目录必须落在自己的 home 下——因为搞错了不会报任何错，只是文件出现在不该出现的地方。
+
+### 随包分发 rg / fd
+
+目录隔离解决了"放错地方"，但没解决"根本没有"。pi 是**首次使用时联网下载** rg 和 fd 的，所以一台没有外网的机器上，`grep` 和 `find` 会静默失效——用户看到的是"搜不出东西"，不是报错。
+
+`npm run fetch:tools` 按固定版本抓取并校验（ripgrep 15.0.0、fd 10.5.0），`npm run package` 会自动带上它。二进制经 `extraResources` 放在 asar **外面**（要执行的东西不能放在归档里），应用首启把它们复制进 `~/.gdou-agent/agent/bin`，之后 pi 直接使用、不再下载。
+
+下载优先走 `curl`：Node 内置的 fetch 不读 `HTTP(S)_PROXY`，在必须走代理的环境里只会给一个不说明原因的 `fetch failed`。
+
+如果这台机器完全访问不到 GitHub，指向一个已经有这些二进制的目录即可（版本仍会校验）：
+
+```bash
+GDOU_TOOLS_SOURCE=/path/to/existing/bin npm run fetch:tools
+```
+
+### 打包要设镜像
+
+`electron-builder` 和 `@electron/get` 默认从 GitHub releases 拉二进制（Electron 本体 120 MB、NSIS 工具链）。国内网络下这一步会失败，而且**报错具有误导性**——表面是 `502 Bad Gateway`，实际是本地代理拒绝转发：
+
+```bash
+export ELECTRON_MIRROR="https://mirrors.huaweicloud.com/electron/"
+export ELECTRON_BUILDER_BINARIES_MIRROR="https://mirrors.huaweicloud.com/electron-builder-binaries/"
+npm run package
+```
+
+两个都要设。只设后者是不够的，`electron-builder` 会独立再下一次 Electron。
+
+另外注意：`npm install electron` 的安装脚本失败**不会**让 install 整体失败——`node_modules/electron/` 会装好，但 `dist/electron.exe` 不存在、`path.txt` 是空的。补跑一次 `node node_modules/electron/install.js` 即可。
+
+安装包 118 MB（含随包的 ripgrep 与 fd），装完约 403 MB。绝大部分是 Chromium 和 Electron 运行时，内核那 5.4 MB 可以忽略。
+
+## 项目结构
+
+```
+gdou-agent/
+  electron/
+    main.ts             主进程：窗口 + IPC，内核在这里面跑
+    preload.ts          唯一的桥（contextBridge，编译成 CJS）
+  renderer/
+    index.html          工作台结构：标题栏 / 侧栏 / 主区 / 检查器（刻意零构建）
+    tokens.css          设计令牌：配色、字体、间距、动效，深浅两套
+    shell.css           外壳：标题栏、侧栏、主区网格、页面骨架
+    chat.css            时间线、消息气泡、工具卡片、输入框、弹出菜单
+    panels.css          右侧检查器、专家卡片、待做页、诊断面板
+    app.js              事件驱动的渲染与全部交互
+  scripts/
+    vendor-pi.mjs       把 pi 的依赖闭包拷进 vendor/pi，并写 sha256 清单
+    check-vendor.mjs    校验 vendor/pi 逐字节未改动
+    sync-pi-paths.mjs   从 vendored pi 重新生成 tsconfig.pi-paths.json
+    pi-env.mjs          开发态预加载：把 pi 的状态目录钉到本项目
+    fetch-tools.mjs     按固定版本抓取 ripgrep / fd 到 vendor/bin
+    build.mjs           esbuild 打包：main.cjs / preload.cjs / cli.cjs
+    package.mjs         跑 electron-builder，并把二进制下载指向镜像
+    shortcut.mjs        把桌面快捷方式指向本项目里的构建
+    smoke.ts            内核的离线自测
+    tui-check.ts        TUI 的离线自测（假终端 + 脚本化模型）
+    tool-check.ts       工具层的离线自测（真跑 grep / find / ls / read）
+    gui-check.mjs       GUI 自测（启动真应用，用 CDP 读回 DOM 断言）
+  src/
+    cli.ts              无界面 CLI（事件流的参考消费者）
+    index.ts            对外 API —— 只从这里 import
+    paths.ts            文件系统布局（AGENT_HOME、vendored pi 位置）
+    config/
+      providers.ts      provider 预设：环境变量、默认模型
+      settings.ts       settings.json 读写
+    kernel/
+      runtime.ts        Models 集合 + model spec 解析
+      recipe.ts         组合模型：会话 = 模式 + 专家，专家只能收窄工具集
+      events.ts         归一化后的 AgentEvent 词表（pi 事件 -> 自己的）+ 历史回放
+      context.ts        上下文裁剪：只裁发给模型的，不动记录
+      changes.ts        变更追踪：write/edit 的 +N −M（write 靠调用前快照）
+      agent.ts          全项目唯一构造 pi Agent 的地方
+      sessions.ts       会话落盘与恢复（一会话一文件，原子写）
+      toolchain.ts      工具链目录 + 随包二进制投放
+      demo.ts           脚本化运行：无凭据也能跑一轮
+    experts/
+      types.ts          Expert 契约
+      frontmatter.ts    markdown frontmatter 解析
+      builtin.ts        随包的三个示例专家（也是 markdown，走同一个解析器）
+      registry.ts       三级加载：项目级 > 用户级 > 内置
+    profiles/
+      types.ts          AgentProfile 契约
+      registry.ts       id -> profile 查找
+      general.ts        日常任务
+      coding.ts         仓库开发
+    tools/
+      time.ts           无状态示例工具
+      notes.ts          有状态示例工具（自带存储）
+      present.ts        产物交付：把文件交给界面显示
+      net-guard.ts      URL 安全：拦回环 / 私网 / 云元数据 / 内嵌凭据
+      web-fetch.ts      抓网页正文（readability + linkedom）
+      web-search.ts     联网搜索（Brave / Tavily，需环境变量里的 key）
+    tui/                交互式前端（见上面「TUI 界面」）
+    ui/
+      style.ts          极简 ANSI 辅助函数
+  dist/                 构建产物 —— 不要手改，由 npm run build 生成
+  release/              安装包产物 —— 由 npm run package 生成
+  vendor/pi/            vendored pi 源码（只读）+ manifest.json + README.md
+  vendor/bin/           下载的 ripgrep / fd —— 由 npm run fetch:tools 生成
+  electron-builder.yml  安装包配置
+  FEATURES.md           在 pi 之上加了什么，以及怎么实现的
+  tsconfig.json         项目配置
+  tsconfig.pi-paths.json  自动生成 —— 不要手改
+```
+
+## 架构
+
+三层，每一层都可以在不碰其他两层的前提下替换。
+
+**运行时**（`kernel/runtime.ts`）持有 `Models` 集合。pi-ai 自带 41 家 provider，
+它们已经知道怎么从环境变量读 API key，所以这一层只负责把 `deepseek/deepseek-flash`
+这样的 spec 解析成 `Model` 对象。
+
+**模式**（`profiles/`）打包模式之间的差异：系统提示、工具集、执行偏好。
+`AgentProfile` 接口只有三个方法宽。`general` 返回三个无依赖的工具；`coding` 返回
+七个直接取自 `pi-coding-agent` 的工具——它们已经处理好了输出截断、文件变更排队、
+ripgrep 集成，重写一遍纯属浪费。
+
+**内核**（`kernel/agent.ts`）是唯一构造 pi `Agent` 的地方。它解析运行时、向模式
+索取提示和工具、把它们接起来，返回一个 `AgentSession`。这一层之上的所有代码
+都只跟 `AgentSession` 打交道。
+
+### 为什么要有事件归一化层
+
+pi 的 `Agent` 发出的是一条为它自己的 TUI 定制的详细事件流。直接建立在这条流上的
+前端，等于和 pi 的内部实现绑死。`kernel/events.ts` 定义了一套更小的词表——
+`text_delta`、`tool_start`、`tool_end`、`run_end` 等等——并做翻译。TUI 只消费
+`AgentEvent`，所以 pi 可以在底层升级而不必改表现层代码。
+
+这一层已经回本了：provider 调用失败时，pi 的表达方式是一条带 `stopReason: "error"`
+和 `errorMessage` 的 assistant 消息。只渲染 delta 的前端**完全看不到失败**。
+把它提升成一个独立的 `error` 事件修掉了这个问题。
+
+## 链接 pi 源码
+
+pi 仓库没有 `dist`——它是纯源码仓库，而它的各个包在 `exports` 里指向 `./dist/*`。
+所以 `@earendil-works/pi-ai` 这样的裸导入会解析失败。
+
+pi 的源码**已经拷进本仓库**（`vendor/pi/`，6 个包、701 文件）。项目不依赖任何外部
+checkout，克隆下来就能构建。`scripts/sync-pi-paths.mjs` 把 vendored 的
+`compilerOptions.paths` 镜像进 `tsconfig.pi-paths.json`，并把每个 target 重写成指向
+`vendor/pi/packages/*/src`。`tsx` 在运行时遵守这些 paths，`esbuild` 在构建时同样遵守。
+结果就是零构建链接：改 vendored 源码，下次运行即生效。
+
+`vendor/pi` 是**上游代码，必须逐字节不变**。`npm run check:vendor` 按
+`vendor/pi/manifest.json` 里的 sha256 校验每个文件。要改行为就改 `src/`，或者用 pi
+暴露的接缝替换它（`streamFn`、`transformContext`、`beforeToolCall` / `afterToolCall`、
+`prepareNextTurn`）。细节见 `vendor/pi/README.md`。
+
+升级 pi：
+
+```bash
+npm run vendor:pi -- --from <pi checkout>
+npm run sync-paths
+```
+
+`GDOU_VENDOR_DIR` 可以指向别处的源码树。
+
+三个值得知道的细节：
+
+- pi 的 `"*": ["./*"]` 兜底规则被**刻意丢掉**了。它会把任意 specifier 映射到 pi
+  仓库根目录，从而遮蔽第三方导入（`chalk` 会被解析成 `./vendor/pi/chalk`）。
+- `paths` 的 target 必须以 `./` 开头，否则 tsgo 报 `TS5090`。
+- `include` 覆盖了 pi 的 `*.d.ts` 声明补丁。pi 在
+  `packages/coding-agent/src/utils/highlight-js.d.ts` 里声明了
+  `highlight.js/lib/core.js` 这类模块；不带上的话，typecheck pi 源码会失败。
+
+## 命令行
+
+```
+gdou-agent [options] [prompt]
+
+  -p, --profile <id>       要运行的模式
+  -e, --expert <id>        叠加在模式之上的专家
+  -m, --model <spec>       模型，格式 provider/modelId
+  -c, --cwd <path>         模式工具的工作目录
+  -t, --thinking <level>   off | minimal | low | medium | high | xhigh | max
+      --tui                强制打开交互界面
+      --json               以 JSONL 输出归一化事件
+      --list-profiles      列出可用模式
+      --list-experts       列出可用专家及其工具收窄
+      --list-providers     列出支持的 provider 及其环境变量
+      --list-tools [id]    列出某个模式暴露的工具（可配 -e 看收窄后的结果）
+      --doctor             环境、设置、配方、凭据状态
+```
+
+## 专家
+
+一个有名字的方法论。存放在：
+
+```
+~/.gdou-agent/experts/<id>.md          用户级
+<cwd>/.gdou-agent/experts/<id>.md      项目级，同名时优先
+```
+
+frontmatter 放元数据，正文就是提示词：
+
+```markdown
+---
+name: 安全审计
+description: 按攻击面审查代码，只读，不修改任何文件
+tools: [read, grep, find, ls]        # 可选，只能收窄
+thinkingLevel: high                   # 可选
+---
+
+你是一名安全审计员。审查时按以下顺序……
+```
+
+`tools` 是**允许集**，会和模式的工具取**交集**——它永远不会让 agent 多拿到一个工具。
+如果专家要的工具这个模式没有，`--list-tools -e <id>`、`--doctor`、状态行都会说出来，
+因为这个情况看起来像"专家没生效"，而原因从外面看不见。
+
+用 markdown 而不是代码，是因为用户要能自己写、能改、能分享。一个需要写 TypeScript 才能定制的
+"专家"，实际使用者只有写这个项目的人。
+
+prompt 也可以从 stdin 来：`echo "explain closures" | gdou-agent -p general`。
+
+不带 prompt 时会启动交互界面。`--json` 永远不会打开它，因为这个参数是脚本化契约。
+传了 `-p` 则跳过启动时的模式选择器。
+
+## 添加工具
+
+把 schema 声明为具名 const，让 `params` 能被推断出来，然后用
+`AgentTool<typeof schema>` 注解这个工具：
+
+```ts
+const schema = Type.Object({ city: Type.String() });
+
+export const weatherTool: AgentTool<typeof schema, { tempC: number }> = {
+  name: "weather",
+  label: "Weather",
+  description: "Look up current weather for a city.",
+  parameters: schema,
+  async execute(_toolCallId, params) {
+    const tempC = await lookup(params.city);
+    return { content: [{ type: "text", text: `${params.city}: ${tempC}C` }], details: { tempC } };
+  },
+};
+```
+
+如果改成注解 `AgentTool<any>`，`params` 会被拓宽成 `unknown`，`execute` 的签名
+立刻 typecheck 不过。`src/tools/time.ts` 是一个完整的可参考例子。
+
+## 添加模式
+
+实现 `AgentProfile`，并在第一个 agent 被创建之前注册它：
+
+```ts
+registerProfile({
+  id: "research",
+  label: "Research",
+  description: "Long-form research with web access.",
+  systemPrompt: ({ cwd }) => `You are a research assistant. Working directory: ${cwd}`,
+  tools: () => [searchTool, fetchTool],
+});
+```
+
+## 验证
+
+```bash
+npm run check:vendor # 离线：vendor/pi 的 701 个文件逐字节对上 manifest
+npm run smoke        # 离线：模块解析、模式、工具、事件、设置
+npm run check:tui    # 离线：选择器、transcript、实时工具输出、按键
+npm run check:tools  # 离线：真跑 grep / find / ls / read 对固定夹具
+npm run check:gui    # 需先 npm run build：启动真应用，用 CDP 读回 DOM 断言
+npm run typecheck    # tsgo --noEmit，必须干净
+```
+
+`npm run check` 一次跑完除 GUI 之外的全部（GUI 要先构建）。
+
+`smoke` 零成本，是改动内核或重新同步 pi paths 之后应该跑的东西。它会清理掉自己
+产生的状态。除了模块解析、模式、工具、事件、设置之外，它还钉住了上下文裁剪：裁剪的
+不变量（保留 system、裁点落在用户消息前、**不产生没有对应调用的工具结果**、保留的
+每个工具调用都还带着它的结果、**预算小于一轮时仍然裁剪**、单轮无法裁剪时原样返回），
+加上**超预算时发出一次提示**、提示不被重复、**`the transcript still holds everything`**
+（证明裁剪确实没有动记录）、以及指示器的数字来源。
+
+`check:tui` 通过一个脚本化的 provider 驱动真实的 agent 回合，并对到达终端的内容
+做断言。它**不需要 TTY**：它注入一个记录写入的 `Terminal` 来代替真实的 stdio。
+它证明了两件组件级测试做不到的事——事件从 pi 经过归一化层正确路由到了视图；
+以及没有任何渲染行超出终端宽度（`TuiMainScreen` 在超宽时会抛异常，所以
+「跑完没抛」本身就是断言）。
+
+`check:tools` 验证 coding 模式的工具**真的能干活**。它建一个内容已知的临时目录，
+然后真跑 `grep` / `find` / `ls` / `read` 并检查结果——不联网、不需要 API key。
+为什么值得单独一层：这些工具自己不搜索，它们调用 ripgrep 和 fd，而 pi 默认是
+首次使用时联网下载的。只断言"二进制存在"不够，一个截断的或架构不对的二进制
+也会安静地待在那儿，直到有东西去执行它。所以它真跑。
+
+`check:gui` 是 GUI 侧的同一套思路，也是覆盖最广的一条：它按用户的方式启动**真实的 app**
+（`electron .`），用 Chrome DevTools 协议驱动**一轮对话、一次重启、一次换目录、一次多会话
+往返、一次裁剪、一次改名、一次无凭据预览**——发消息、等运行结束、读回 DOM 断言、检查会话
+落盘、关掉应用、重新启动、断言对话完整恢复、压低预算再发一轮并断言提示与指示器、换工作目录、
+开新对话并断言旧对话仍在、再跑一轮、切回旧对话、删掉一条、**行内改名并断言新名落到了磁盘上的
+摘要行**、**最后不带脚本化环境变量再启动一次，断言启动失败被如实报告、预览按钮出现、点进去
+真能跑一轮、且预览没有写进历史**——然后打开诊断面板检查内核状态。
+
+154 项检查覆盖：空状态与模式选择、用户消息逐字渲染、助手文本流式到达、工具调用出现并按名字
+（另加 `smoke` 的 191 条离线断言，含 SSRF 逐例防护、权限判定链、变更摘要）
+标注、工具产出真实输出、折叠与展开的交互、会话落盘与摘要行独立可用、跨重启恢复、工作目录切换
+与持久化、多会话列表与标题、切换与删除、**改名（含空名被忽略）**、裁剪提示的渲染与措辞、
+常驻指示器的数字、**专家切换（含状态行、工具数变化、"模式没有的工具"警告的出现与消失）**、
+**外壳（窗口按钮、导航、侧栏会话列表、检查器的真实工具列表、主题切换与落盘、视图切换）**、
+**产物交付（卡片渲染、检查器列出、点击真的打开预览、预览通道拒绝未交付的路径）**、
+无凭据时的预览入口、路径解析、工具链目录隔离、随包二进制就位、模型目录
+加载、以及诊断探测的结果。
+
+它跑在脚本化运行模式上，所以**不需要 API key，也不需要网络**；它跑在临时状态目录上，所以
+**不会读到也不会毁掉你真实的对话**；它按用户的方式启动应用（而不是把断言塞进 Electron 里跑），
+所以测的就是真正会发布的东西。
+
+**它测不到的东西**：系统目录对话框。它是模态的，没有可脚本化的接口，所以逻辑被拆成
+"只报告路径"和"采纳路径"两步，自检驱动后者。对话框本身需要你手动点一次。
+
+想在没有有效 key 的情况下确认 provider 链路是通的，就设一个故意错误的 key，
+看 API 是否拒绝它：
+
+```bash
+DEEPSEEK_API_KEY=sk-invalid npm run run -- -p general "hi"
+# 预期输出：error: 401: {"message":"Authentication Fails..."}
+```
+
+拿到 401 就说明 provider 注册、model 解析、auth 查找、HTTP 全都正常，
+唯一的问题是凭据不对。
+
+## 状态目录
+
+与 pi 自己的状态分开存放，两者可以共存：
+
+| 路径 | 内容 |
+|---|---|
+| `~/.gdou-agent/settings.json` | 默认模式、模型、思考等级、工作目录 |
+| `~/.gdou-agent/notes.json` | 草稿纸笔记 |
+| `~/.gdou-agent/sessions/<id>.json` | 一段对话一个文件，两行 JSON（摘要 + 记录） |
+| `~/.gdou-agent/agent/bin/` | 随包投放的 ripgrep 与 fd（pi 的目录，被 piConfig 挪到这里） |
+
+用 `GDOU_AGENT_HOME` 覆盖前三个的位置。
+
+## 下一步
+
+内核、CLI、TUI、桌面 GUI、对话界面、会话持久化与多会话（含改名）、工作目录选择、
+上下文裁剪与告知、无凭据预览、安装包都已经可用。
+
+**还没做的：**
+
+1. **接真实 provider 跑一轮**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。这一条需要你的 key，我无法自己完成。
+
+**待设计的三个自定义功能**：可复用的自动化项目、专家人格、skills。它们要挂的接缝
+已经存在——profile 注册表就是模式层，归一化事件流是视图唯一依赖的东西，
+`TuiApp` 持有唯一的全局按键处理器，GUI 侧对应 `renderer/`。尚未确定的是这些功能
+本身的形态，那是一次设计讨论，而不是实现问题。
