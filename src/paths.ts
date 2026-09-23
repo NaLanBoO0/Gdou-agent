@@ -86,3 +86,20 @@ export function expertsDir(): string {
 export function projectExpertsDir(cwd: string): string {
 	return join(cwd, ".gdou-agent", "experts");
 }
+
+/** User-level modes: one markdown file per mode. */
+export function modesDir(): string {
+	return join(AGENT_HOME, "modes");
+}
+
+/**
+ * Project-level modes, resolved against a working directory.
+ *
+ * Same reasoning as `projectExpertsDir`: a repository is the natural place to
+ * version "the modes this codebase is worked on with", and a checked-in
+ * definition should not be shadowed by whatever the individual happens to have
+ * at home.
+ */
+export function projectModesDir(cwd: string): string {
+	return join(cwd, ".gdou-agent", "modes");
+}

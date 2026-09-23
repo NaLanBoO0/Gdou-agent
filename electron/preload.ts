@@ -44,6 +44,34 @@ contextBridge.exposeInMainWorld("gdou", {
 	experts: () => ipcRenderer.invoke("agent:experts"),
 
 	/**
+	 * Credential rows, one per provider.
+	 *
+	 * Carries a masked hint and the credential's origin, never the key. There is
+	 * deliberately no "read my key back" call: nothing in the interface needs
+	 * one, and a channel that exists is a channel that can leak.
+	 */
+	credentials: () => ipcRenderer.invoke("credentials:list"),
+
+	/** Save an API key. Resolves to the fresh rows, so the view cannot drift. */
+	setCredential: (providerId: string, key: string) =>
+		ipcRenderer.invoke("credentials:set", providerId, key),
+
+	/** Remove a stored key. A key from the environment is untouched. */
+	removeCredential: (providerId: string) => ipcRenderer.invoke("credentials:remove", providerId),
+
+	/** Models of one provider, for the picker. */
+	models: (providerId: string) => ipcRenderer.invoke("models:list", providerId),
+
+	/**
+	 * Choose the model a session runs on.
+	 *
+	 * Rebuilds the session, because the model is resolved when one is built —
+	 * saving the choice alone would leave the status line describing a model the
+	 * running agent is not using. An empty spec clears it.
+	 */
+	setModel: (spec: string) => ipcRenderer.invoke("agent:setModel", spec),
+
+	/**
 	 * Tear down any running session and build one for this recipe.
 	 *
 	 * `expertId` is `null` for "no expert", which is not the same as omitting it

@@ -6,12 +6,36 @@
  */
 
 // Kernel
-export { createAgent, type AgentSession, type CreateAgentOptions } from "./kernel/agent.ts";
+export {
+	createAgent,
+	defaultStreamFn,
+	type AgentSession,
+	type CreateAgentOptions,
+	type PermissionDenial,
+	type StreamFnOptions,
+} from "./kernel/agent.ts";
 export { composePrompt, narrowTools, type RecipeRequest, type SessionRecipe, type ToolSelection } from "./kernel/recipe.ts";
 export { ModelRuntime, parseModelSpec, type ParsedSpec } from "./kernel/runtime.ts";
+export {
+	authPath,
+	credentialStore,
+	FileCredentialStore,
+	providerCredentials,
+	removeApiKey,
+	setApiKey,
+	type ProviderCredential,
+} from "./kernel/credentials.ts";
 export { toolchainPaths, type ToolchainPaths } from "./kernel/toolchain.ts";
 export { translate, replay, blocksToText, type AgentEvent, type AgentEventListener } from "./kernel/events.ts";
 export { CONTEXT_BUDGET_CHARS, contextReport, pruneForContext } from "./kernel/context.ts";
+export { withModelFallback, describeModel, type FallbackReport, type ModelFallbackOptions } from "./kernel/fallback.ts";
+export {
+	LoopGuard,
+	callKey,
+	loopBlockReason,
+	DEFAULT_LOOP_REPEAT_LIMIT,
+	type LoopDecision,
+} from "./kernel/loop-guard.ts";
 export {
 	createSessionId,
 	deleteSession,
@@ -27,16 +51,31 @@ export {
 	type StoredSession,
 } from "./kernel/sessions.ts";
 
-// Profiles
-export { getProfile, hasProfile, listProfiles, registerProfile, FALLBACK_PROFILE_ID } from "./profiles/registry.ts";
+// Modes (still spelled "profile" throughout the code and the file layout; the
+// concept the UI, the recipe, and settings call a mode).
+export {
+	getProfile,
+	hasProfile,
+	listProfiles,
+	loadProfiles,
+	registerProfile,
+	requireProfile,
+	FALLBACK_PROFILE_ID,
+	type ProfileCatalog,
+	type ProfileLoadOptions,
+} from "./profiles/registry.ts";
 export type { AgentProfile, AnyTool, ProfileContext } from "./profiles/types.ts";
-export { createCodingProfile, CODING_TOOL_NAMES, DEFAULT_CODING_TOOLS } from "./profiles/coding.ts";
-export { generalProfile } from "./profiles/general.ts";
+export { toProfile, withEnvironment } from "./profiles/loader.ts";
+export { BUILTIN_MODES } from "./profiles/builtin.ts";
+export { TOOL_NAMES, TOOL_FACTORIES, resolveTool, type ToolFactory } from "./profiles/tool-catalog.ts";
 
 // Experts
 export { getExpert, hasExpert, listExperts, loadExperts, type ExpertCatalog } from "./experts/registry.ts";
-export { parseFrontmatter, type Frontmatter } from "./experts/frontmatter.ts";
 export type { Expert, ExpertDraft } from "./experts/types.ts";
+
+// Markdown-backed definitions, shared by modes and experts
+export { parseFrontmatter, type Frontmatter } from "./definitions/frontmatter.ts";
+export { loadDefinitionDir, type DirectoryLoad } from "./definitions/directory.ts";
 
 // Config
 export { loadSettings, saveSettings, DEFAULT_SETTINGS, THINKING_LEVELS, type Settings } from "./config/settings.ts";

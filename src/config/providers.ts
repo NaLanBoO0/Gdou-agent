@@ -70,19 +70,31 @@ export function findPreset(id: string): ProviderPreset | undefined {
 	return PROVIDER_PRESETS.find((preset) => preset.id === id);
 }
 
+/** Whether an environment variable holds a usable value. */
+function present(value: string | undefined): boolean {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
 /** A preset whose API key is present in the environment. */
 export function presetsWithCredentials(env: NodeJS.ProcessEnv = process.env): ProviderPreset[] {
-	return PROVIDER_PRESETS.filter((preset) => {
-		const value = env[preset.envVar];
-		return typeof value === "string" && value.trim().length > 0;
-	});
+	return PROVIDER_PRESETS.filter((preset) => present(env[preset.envVar]));
 }
 
 /**
- * Pick a default model spec ("provider/model") from the environment.
- * Prefers presets in declared order so DeepSeek wins when several keys are set.
+ * Pick a default model spec ("provider/model") from what is configured.
+ * Prefers presets in declared order so DeepSeek wins when several are set.
+ *
+ * `alsoConfigured` carries preset ids that have a credential somewhere other
+ * than the environment — currently a key stored through the interface. It is a
+ * parameter rather than a lookup so this module keeps knowing nothing about
+ * where credentials live; passing it is what stops a key entered in the
+ * interface from being usable by name but never chosen by default, which reads
+ * to the user as "saving the key did nothing".
  */
-export function defaultModelSpec(env: NodeJS.ProcessEnv = process.env): string | undefined {
-	const preset = presetsWithCredentials(env)[0];
+export function defaultModelSpec(
+	env: NodeJS.ProcessEnv = process.env,
+	alsoConfigured: ReadonlySet<string> = new Set(),
+): string | undefined {
+	const preset = PROVIDER_PRESETS.find((item) => alsoConfigured.has(item.id) || present(env[item.envVar]));
 	return preset ? `${preset.id}/${preset.defaultModel}` : undefined;
 }

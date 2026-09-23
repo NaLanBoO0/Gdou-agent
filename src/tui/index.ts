@@ -75,7 +75,11 @@ export async function runTui(options: RunTuiOptions = {}): Promise<void> {
 	// worse first run than being told immediately.
 	const shouldSelect = options.selectProfile ?? options.profile === undefined;
 	if (shouldSelect && presetsWithCredentials().length > 0) {
-		const picked = await selectProfile(theme, profileId);
+		// Resolved the same way `createAgent` resolves it, so the picker lists
+		// the project modes that the session about to be built will actually
+		// see. Listing a different set than the one that gets used would make
+		// the picker a lie.
+		const picked = await selectProfile(theme, profileId, options.cwd ?? settings.cwd);
 		if (picked === undefined) return;
 		profileId = picked;
 		if (options.rememberProfile ?? true) saveSettings({ ...settings, mode: picked });
@@ -103,8 +107,12 @@ export async function runTui(options: RunTuiOptions = {}): Promise<void> {
  * Resolves with undefined when the user cancels, which the caller must treat as
  * "do not start", not as "use the default".
  */
-async function selectProfile(theme: TuiTheme, current: string | undefined): Promise<string | undefined> {
-	const choices: ProfileChoice[] = listProfiles().map((profile) => ({
+async function selectProfile(
+	theme: TuiTheme,
+	current: string | undefined,
+	cwd: string | undefined,
+): Promise<string | undefined> {
+	const choices: ProfileChoice[] = listProfiles(cwd).map((profile) => ({
 		id: profile.id,
 		label: profile.label,
 		description: profile.description,

@@ -162,6 +162,14 @@ const state = {
 	artifacts: [],
 	/** The last experts catalog, for the paths card on the experts page. */
 	expertCatalog: null,
+	/**
+	 * Last credential rows read from the main process.
+	 *
+	 * Cached so a redraw does not re-ask, and so the model picker can know which
+	 * providers are usable without a second round trip. Never holds a key — the
+	 * rows carry a masked hint at most.
+	 */
+	credentials: [],
 	inspectorVisible: true,
 };
 
@@ -587,6 +595,8 @@ function setStatusLine() {
 		byId("footer-cwd").textContent = "—";
 		byId("model-label").textContent = "";
 		byId("model-dot").className = "";
+		byId("model-trigger").title = "还没有会话";
+		closeModelMenu();
 		renderInspector();
 		return;
 	}
@@ -600,14 +610,35 @@ function setStatusLine() {
 	const context = state.context;
 	const pruned = context && context.visible < context.total ? ` · 模型可见 ${context.visible}/${context.total} 条` : "";
 
-	text.textContent = `${session.profile.id}${expert} · ${session.model.provider}/${session.model.id} · ${session.toolCount} 个工具${mode}${pruned}`;
+	// Disclosed up front rather than only at the moment of the switch. A reply
+	// that came from a different model than the one on the status line is
+	// something the user should have known could happen *before* it did — the
+	// notice the kernel raises mid-run tells them it happened, not that it could.
+	const backup = session.fallback ? ` ⇄ ${session.fallback.provider}/${session.fallback.id}` : "";
+
+	text.textContent = `${session.profile.id}${expert} · ${session.model.provider}/${session.model.id}${backup} · ${session.toolCount} 个工具${mode}${pruned}`;
 	cwd.textContent = session.cwd;
 	cwd.disabled = false;
 
 	byId("footer-model").textContent = `${session.model.provider}/${session.model.id}`;
 	byId("footer-cwd").textContent = session.cwd;
 	byId("model-label").textContent = `${session.model.provider}/${session.model.id}${session.scripted ? "（脚本化）" : ""}`;
-	byId("model-dot").className = session.scripted ? "online" : "";
+	// The dot means "this model can actually be called", answered by pi's own
+	// resolution layer rather than inferred from what is on disk. It used to mean
+	// "scripted run" — which the label already says in words right next to it, and
+	// which left the reader with no way to tell a working model from an unusable
+	// one at a glance. A grey dot plus a failed first message was the only signal.
+	const dot = byId("model-dot");
+	dot.className = session.modelReady ? "online" : "";
+	byId("model-trigger").title = session.modelReady
+		? "切换模型 · 当前模型可以调用"
+		: session.scripted
+			? "切换模型 · 当前是脚本化运行，不会真的调用模型"
+			: "切换模型 · 当前模型没有可用的凭据，发消息会失败";
+	// The switcher's list is built around the running session, so a session
+	// change leaves it stale. Closing is the honest response: reopening rebuilds
+	// it, while a list still highlighting the previous model would be a lie.
+	closeModelMenu();
 
 	// An expert written for another mode can narrow the tool set to nothing. That
 	// is correct behaviour and completely invisible otherwise — the agent would
@@ -1128,6 +1159,15 @@ function renderInspector() {
 			inspectorRow("模式", session.profile.id, true),
 			inspectorRow("专家", session.expert ? `${session.expert.label}（${session.expert.id}）` : "无", Boolean(session.expert)),
 			inspectorRow("模型", `${session.model.provider}/${session.model.id}`, true),
+			// The row is drawn even when there is no fallback. An absent row is
+			// indistinguishable from a build that lacks the feature, and the whole
+			// value of disclosing a fallback is that the reader knows it *could*
+			// be used before it is.
+			inspectorRow(
+				"备用模型",
+				session.fallback ? `${session.fallback.provider}/${session.fallback.id}` : "未配置",
+				Boolean(session.fallback),
+			),
 			inspectorRow("工具", `${session.toolCount} 个`, session.toolCount > 0),
 			inspectorRow("工作目录", session.cwd, true),
 		);
@@ -1208,7 +1248,7 @@ function setInspectorVisible(visible) {
 
 // ------------------------------------------------------------------- views
 
-const VIEWS = ["chat", "experts", "automation", "skills"];
+const VIEWS = ["chat", "experts", "automation", "skills", "settings"];
 
 function setView(view) {
 	state.view = view;
@@ -1223,6 +1263,7 @@ function setView(view) {
 	}
 
 	if (view === "experts") void refreshExperts();
+	if (view === "settings") void refreshCredentials();
 	if (view === "diagnostics") void loadDiagnostics();
 }
 
@@ -1231,6 +1272,18 @@ for (const button of byId("primary-nav").querySelectorAll("button")) {
 }
 
 // ------------------------------------------------------------------ experts
+
+/**
+ * Modes shown in the sidebar switch.
+ *
+ * Not every mode: the switch is a segmented control two cells wide, and modes
+ * are now files anyone can add, so the list can be any length. The shipped modes
+ * come first in the catalog order and are the ones people switch between;
+ * anything else is reachable from the picker, which always lists everything.
+ * Capping here rather than growing the control keeps one mode from being
+ * squeezed to nothing when someone has written six.
+ */
+const MODE_SWITCH_LIMIT = 2;
 
 /** The mode switch mirrors the picker, so the two cannot disagree. */
 function syncModeSwitch() {
@@ -1241,7 +1294,7 @@ function syncModeSwitch() {
 
 function renderModeSwitch(profiles) {
 	byId("mode-switch").replaceChildren(
-		...profiles.slice(0, 2).map((profile) => {
+		...profiles.slice(0, MODE_SWITCH_LIMIT).map((profile) => {
 			const button = element("button", null, profile.label);
 			button.type = "button";
 			button.dataset.mode = profile.id;
@@ -1357,6 +1410,462 @@ function syncPickers() {
 	byId("expert").value = state.expertId ?? "";
 }
 
+// ------------------------------------------------------------ model picker
+
+/**
+ * The model switcher in the composer.
+ *
+ * Ported in shape from the shell this interface follows (SztuCode's
+ * `ModelConfigMenu`): a trigger showing the running model, a popover listing
+ * everything usable grouped by provider, and a gear that jumps to the page where
+ * keys are entered.
+ *
+ * The list is built from *configured* providers only. A model whose provider has
+ * no credential produces a click that fails later, at request time, as an
+ * authentication error several steps away from the choice that caused it — and
+ * the user has no reason to connect the two.
+ *
+ * Nothing is fetched until the menu is opened. The catalogue is thousands of
+ * entries across every provider, and building it on every session change to
+ * serve a popover that is usually closed would be work for nothing.
+ */
+
+function modelMenuOpen() {
+	return byId("model-menu").hidden === false;
+}
+
+function closeModelMenu() {
+	byId("model-menu").hidden = true;
+	byId("model-trigger").setAttribute("aria-expanded", "false");
+}
+
+/**
+ * Place the menu against the trigger.
+ *
+ * The menu lives on `body` now, so its coordinates are the viewport's and the
+ * trigger's rect is the only thing tying it back. Recomputed on resize, because
+ * the window can be resized while it is open; not on scroll, because the composer
+ * is pinned to the bottom of the layout and does not move when the transcript
+ * scrolls.
+ */
+function positionModelMenu() {
+	const menu = byId("model-menu");
+	const rect = byId("model-trigger").getBoundingClientRect();
+	// Held inside the viewport: on a narrow window the menu is as wide as the
+	// window allows, and anchoring it to the trigger's right edge would push it
+	// off — a popover partly off-screen is one the reader has to guess at.
+	menu.style.right = `${Math.max(8, window.innerWidth - rect.right)}px`;
+	menu.style.bottom = `${Math.max(8, window.innerHeight - rect.top + 8)}px`;
+}
+
+async function toggleModelMenu() {
+	if (modelMenuOpen()) {
+		closeModelMenu();
+		return;
+	}
+	positionModelMenu();
+	byId("model-menu").hidden = false;
+	byId("model-trigger").setAttribute("aria-expanded", "true");
+	await buildModelMenu();
+}
+
+async function buildModelMenu() {
+	const list = byId("model-menu-list");
+	const note = byId("model-menu-note");
+	list.replaceChildren();
+	note.textContent = "正在读取…";
+
+	let snapshot;
+	try {
+		snapshot = await window.gdou.credentials();
+	} catch (error) {
+		note.textContent = `读不到凭据状态：${error.message}`;
+		return;
+	}
+
+	const usable = snapshot.providers.filter((row) => row.source);
+	const entries = [];
+	for (const row of usable) {
+		let models = [];
+		try {
+			models = await window.gdou.models(row.providerId);
+		} catch {
+			models = [];
+		}
+		for (const model of models) {
+			entries.push({ spec: `${row.providerId}/${model.id}`, name: model.name || model.id, vendor: row.label });
+		}
+	}
+
+	const current = state.session?.model;
+	const runningSpec = current ? `${current.provider}/${current.id}` : null;
+	// The running model is listed even when its provider has no credential — a
+	// mode file can pin one. Omitting it would leave the status line naming a
+	// model this control cannot show, which reads as the control being broken.
+	if (runningSpec && !entries.some((entry) => entry.spec === runningSpec)) {
+		entries.unshift({ spec: runningSpec, name: current.name || current.id, vendor: current.provider });
+	}
+
+	if (entries.length === 0) {
+		note.textContent = "没有可用的模型。先到「设置」里配置一个服务商的 key。";
+		return;
+	}
+
+	let lastVendor = null;
+	for (const entry of entries) {
+		// One heading per provider, not one per row: with four models behind a
+		// single provider, repeating its name on every row is noise.
+		if (entry.vendor !== lastVendor) {
+			lastVendor = entry.vendor;
+			list.append(element("p", "model-menu-group", entry.vendor));
+		}
+
+		const item = element("button", "model-menu-item");
+		item.type = "button";
+		item.setAttribute("role", "menuitemradio");
+		const isCurrent = entry.spec === runningSpec;
+		item.setAttribute("aria-checked", isCurrent ? "true" : "false");
+		// The spec is carried on the element so a check can assert what choosing this
+		// row would actually select, rather than matching on a display name.
+		item.dataset.spec = entry.spec;
+		item.append(element("b", null, entry.name));
+		if (isCurrent) item.append(icon(["M4 12.5 9.5 18 20 6.5"], 14));
+		item.addEventListener("click", () => void chooseModel(entry, item));
+		list.append(item);
+	}
+
+	note.textContent = "只列出已配置的服务商 · 在「设置」里可以再加";
+}
+
+async function chooseModel(entry, item) {
+	if (item.getAttribute("aria-checked") === "true") {
+		closeModelMenu();
+		return;
+	}
+	item.disabled = true;
+	const note = byId("model-menu-note");
+	note.textContent = `正在切换到 ${entry.name}…`;
+	try {
+		await window.gdou.setModel(entry.spec);
+		closeModelMenu();
+		// The session announcement redraws the transcript and the label; the
+		// settings page is refreshed too so its picker cannot disagree.
+		if (state.view === "settings") await refreshCredentials();
+	} catch (error) {
+		note.textContent = `切换失败：${error.message}`;
+		item.disabled = false;
+	}
+}
+
+byId("model-trigger").addEventListener("click", (event) => {
+	event.stopPropagation();
+	void toggleModelMenu();
+});
+
+byId("model-manage").addEventListener("click", (event) => {
+	event.stopPropagation();
+	closeModelMenu();
+	setView("settings");
+});
+
+// The popover floats over the transcript, so it has to close the ways a popover
+// does: a click anywhere else, or Escape.
+document.addEventListener("pointerdown", (event) => {
+	if (!modelMenuOpen()) return;
+	// Both the trigger and the menu count as "inside". The menu is a child of
+	// `body`, not of the trigger's wrapper, so testing the wrapper alone would
+	// treat every press on a menu row as a press outside — the menu would close
+	// on pointerdown, before the row's own click handler ran, and picking a model
+	// would silently do nothing. The regression test for this is
+	// "clicking a menu row applies it".
+	if (byId("model-trigger").contains(event.target)) return;
+	if (byId("model-menu").contains(event.target)) return;
+	closeModelMenu();
+});
+
+window.addEventListener("resize", () => {
+	if (modelMenuOpen()) positionModelMenu();
+});
+
+document.addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && modelMenuOpen()) closeModelMenu();
+});
+
+// -------------------------------------------------------------- credentials
+
+/**
+ * The model-and-credentials page.
+ *
+ * Three rules shape it, and each exists because the obvious alternative is
+ * wrong:
+ *
+ * - **No key is ever read back into this page.** A row shows whether a provider
+ *   is configured and a masked hint, which answers "which key is installed"
+ *   without the value existing in a context that can be logged or screenshotted.
+ * - **The picker offers configured providers only.** A dropdown listing models
+ *   that cannot be called is a trap rather than a choice, and the failure would
+ *   arrive later, as an authentication error, far from the selection.
+ * - **Saving a key does not restart a working session.** The model is resolved
+ *   when a session is built and credentials are read per request, so a running
+ *   session picks the new key up by itself. Rebuilding would throw away the
+ *   conversation on screen to achieve nothing.
+ */
+
+/** Temporarily replace a button's label with the outcome, then put it back. */
+function flash(button, text, ms = 1500) {
+	const original = button.textContent;
+	button.textContent = text;
+	setTimeout(() => {
+		button.textContent = original;
+	}, ms);
+}
+
+/** What a provider's state reads as, in one phrase. */
+function credentialLabel(row) {
+	const hint = row.hint ? ` · ${row.hint}` : "";
+	if (row.source === "stored") return `已配置${hint}`;
+	if (row.source === "environment") return `已配置（环境变量）${hint}`;
+	return "未配置";
+}
+
+function renderCredentials(target, rows) {
+	target.replaceChildren(
+		...rows.map((row) => {
+			const card = element("div", "cred-row");
+
+			const head = element("div", "cred-head");
+			head.append(element("b", null, row.label));
+			const pill = element("span", "status-pill", credentialLabel(row));
+			if (!row.source) pill.classList.add("status-pill--idle");
+			head.append(pill);
+			card.append(head);
+
+			if (row.envVar) card.append(element("p", "cred-note", `对应环境变量：${row.envVar}`));
+
+			const form = element("div", "cred-form");
+			const input = element("input", "cred-input");
+			// A password field rather than text: the value is about to be stored
+			// on disk and never shown again, so there is no reading it back off
+			// the screen that we would want to make easy.
+			input.type = "password";
+			input.placeholder = row.source === "stored" ? "粘贴新 key 以替换" : "粘贴 API key";
+			input.autocomplete = "off";
+			input.spellcheck = false;
+
+			const save = element("button", "outline-button", "保存");
+			save.type = "button";
+			save.addEventListener("click", () => void saveCredential(row, input, save));
+
+			const remove = element("button", "ghost", "删除");
+			remove.type = "button";
+			// Only a stored key is ours to delete. A key that came from the
+			// environment has no file behind it, and an enabled button would
+			// promise a deletion that cannot happen.
+			remove.disabled = row.source !== "stored";
+			remove.addEventListener("click", () => void removeCredential(row, remove));
+
+			form.append(input, save, remove);
+			card.append(form);
+			return card;
+		}),
+	);
+}
+
+async function refreshCredentials() {
+	try {
+		const snapshot = await window.gdou.credentials();
+		state.credentials = snapshot.providers;
+		byId("auth-path").textContent = snapshot.authPath;
+		renderCredentials(byId("credential-list"), snapshot.providers);
+		await renderModelPicker(snapshot.providers);
+	} catch (error) {
+		byId("credential-list").replaceChildren(
+			element("p", "inspector-empty", `无法读取凭据状态：${error.message}`),
+		);
+	}
+}
+
+async function saveCredential(row, input, button) {
+	const key = input.value.trim();
+	if (key.length === 0) {
+		flash(button, "先粘贴 key");
+		return;
+	}
+	button.disabled = true;
+	try {
+		const snapshot = await window.gdou.setCredential(row.providerId, key);
+		input.value = "";
+		state.credentials = snapshot.providers;
+		renderCredentials(byId("credential-list"), snapshot.providers);
+		await renderModelPicker(snapshot.providers);
+		await adoptCredentialsIfIdle(snapshot.providers);
+		flash(button, "已保存");
+	} catch (error) {
+		addError(`保存 key 失败：${error.message}`);
+		flash(button, "失败");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+async function removeCredential(row, button) {
+	button.disabled = true;
+	try {
+		const snapshot = await window.gdou.removeCredential(row.providerId);
+		state.credentials = snapshot.providers;
+		renderCredentials(byId("credential-list"), snapshot.providers);
+		await renderModelPicker(snapshot.providers);
+	} catch (error) {
+		addError(`删除 key 失败：${error.message}`);
+		flash(button, "失败");
+	} finally {
+		button.disabled = false;
+	}
+}
+
+/**
+ * Turn a window that had no credentials into a working one.
+ *
+ * This is the point of the page: someone who just pasted a key expects the
+ * application to start working, not to be told to relaunch. Guarded on there
+ * being nothing to disturb — a live session keeps running, because credentials
+ * are read per request and a rebuild would discard the conversation on screen.
+ */
+async function adoptCredentialsIfIdle(providers) {
+	if (!providers.some((row) => row.source)) return;
+	if (state.running) return;
+	if (state.session && !state.session.scripted) return;
+	// `scripted: false` is passed explicitly, and that is the whole point. An
+	// omitted value means "no opinion", which the main process resolves as "keep
+	// whatever was running" — so a session started from the preview button stayed
+	// on the scripted transport after a key was saved, and the user went on
+	// getting the canned replies while believing they were talking to a model.
+	await startSession(state.profileId ?? "general", state.expertId ?? null, { scripted: false });
+}
+
+function formatContext(tokens) {
+	if (typeof tokens !== "number" || tokens <= 0) return "";
+	return tokens >= 1000 ? `${Math.round(tokens / 1000)}K` : String(tokens);
+}
+
+/** Fill the model dropdown for one provider, keeping the running choice if it is this one. */
+async function loadModelsFor(providerId, current) {
+	const modelSelect = byId("model-id");
+	modelSelect.disabled = true;
+	let models = [];
+	try {
+		models = await window.gdou.models(providerId);
+	} catch (error) {
+		byId("model-note").textContent = `读不到模型列表：${error.message}`;
+		return;
+	}
+	if (models.length === 0) {
+		modelSelect.replaceChildren(element("option", null, "（内置目录里没有模型）"));
+		byId("model-note").textContent = `pi 的内置目录里没有 ${providerId} 的模型，这个服务商只能用环境变量指定。`;
+		return;
+	}
+	modelSelect.replaceChildren(
+		...models.map((model) => {
+			const context = formatContext(model.contextWindow);
+			const option = element("option", null, `${model.name || model.id}${context ? ` · ${context}` : ""}`);
+			option.value = `${providerId}/${model.id}`;
+			return option;
+		}),
+	);
+	modelSelect.disabled = false;
+	const running = current && current.provider === providerId ? `${providerId}/${current.id}` : null;
+	modelSelect.value = running ?? modelSelect.options[0].value;
+	updateModelNote();
+}
+
+/**
+ * Say what applying the current selection would do.
+ *
+ * Worth the words: switching rebuilds the session, and a control that silently
+ * discards the conversation on screen is one people learn not to touch.
+ */
+function updateModelNote() {
+	const spec = byId("model-id").value;
+	const current = state.session?.model;
+	const note = byId("model-note");
+	if (!spec) {
+		note.textContent = "先配置一个服务商的 key。";
+		return;
+	}
+	if (!current) {
+		note.textContent = `当前没有会话。应用 ${spec} 会用它新建一个。`;
+		return;
+	}
+	const running = `${current.provider}/${current.id}`;
+	note.textContent =
+		running === spec ? `正在使用：${spec}` : `运行中：${running}。应用后会用 ${spec} 重建会话。`;
+}
+
+/**
+ * Fill both pickers on the settings page.
+ *
+ * Providers come from the rows that are actually configured, and the running
+ * model's provider is prepended even when it is not among them — otherwise the
+ * status line would name a model the picker cannot show, which reads as the
+ * control being broken rather than as the credential being missing.
+ */
+async function renderModelPicker(providers) {
+	const providerSelect = byId("model-provider");
+	const modelSelect = byId("model-id");
+	const current = state.session?.model;
+
+	const ids = providers.filter((row) => row.source).map((row) => row.providerId);
+	if (current && !ids.includes(current.provider)) ids.unshift(current.provider);
+
+	if (ids.length === 0) {
+		providerSelect.replaceChildren(element("option", null, "尚未配置"));
+		providerSelect.disabled = true;
+		modelSelect.replaceChildren();
+		modelSelect.disabled = true;
+		byId("model-note").textContent = "还没有任何服务商配置好，所以没有模型可选。";
+		return;
+	}
+
+	providerSelect.disabled = false;
+	providerSelect.replaceChildren(
+		...ids.map((id) => {
+			const option = element("option", null, providers.find((row) => row.providerId === id)?.label ?? id);
+			option.value = id;
+			return option;
+		}),
+	);
+	providerSelect.value = current && ids.includes(current.provider) ? current.provider : ids[0];
+	await loadModelsFor(providerSelect.value, current);
+}
+
+byId("credentials-refresh").addEventListener("click", () => void refreshCredentials());
+
+byId("model-provider").addEventListener("change", () =>
+	void loadModelsFor(byId("model-provider").value, state.session?.model),
+);
+
+byId("model-id").addEventListener("change", () => updateModelNote());
+
+byId("model-apply").addEventListener("click", async () => {
+	const spec = byId("model-id").value;
+	if (!spec) return;
+	try {
+		await window.gdou.setModel(spec);
+		await refreshCredentials();
+	} catch (error) {
+		addError(`切换模型失败：${error.message}`);
+	}
+});
+
+byId("model-reset").addEventListener("click", async () => {
+	try {
+		await window.gdou.setModel("");
+		await refreshCredentials();
+	} catch (error) {
+		addError(`恢复默认模型失败：${error.message}`);
+	}
+});
+
 // -------------------------------------------------------------- diagnostics
 
 function renderKV(target, rows) {
@@ -1375,6 +1884,13 @@ function renderProfiles(target, profiles) {
 		...profiles.map((profile) => {
 			const item = element("li");
 			item.append(element("div", "name", profile.id), element("div", "desc", `${profile.label} — ${profile.description}`));
+			// The file is named only when there is one. A built-in mode has no file
+			// to point at, and printing "built-in" on every shipped row is noise;
+			// when a mode did come from a file, that path is the one fact that
+			// answers "why is this mode not behaving as I wrote it".
+			if (profile.source && !profile.source.startsWith("(built-in)")) {
+				item.append(element("div", "source", profile.source));
+			}
 			return item;
 		}),
 	);
@@ -1557,7 +2073,7 @@ document.addEventListener("keydown", (event) => {
 		beginNewChat();
 		return;
 	}
-	const index = ["1", "2", "3", "4"].indexOf(key);
+	const index = ["1", "2", "3", "4", "5"].indexOf(key);
 	if (index !== -1) {
 		event.preventDefault();
 		setView(VIEWS[index]);
@@ -1657,8 +2173,13 @@ async function boot() {
 	// waiting for a choice that most runs will not change. The expert is left
 	// undefined on purpose: the main process then applies the stored default, and
 	// the picker is synced to whatever it resolved to.
+	//
+	// A fresh conversation, not the most recent one. Opening the app straight
+	// into an old transcript front-loads history the user did not ask for; the
+	// history is one click away in the sidebar, and a new conversation is the
+	// default most launches expect.
 	const initial = profiles[0]?.id;
-	if (initial) await startSession(initial, undefined);
+	if (initial) await startSession(initial, undefined, { fresh: true });
 }
 
 void boot();

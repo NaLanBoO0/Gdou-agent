@@ -66,6 +66,23 @@ export interface Settings {
 	 * directory the agent may reach.
 	 */
 	permission?: PermissionPolicy;
+	/**
+	 * Model to retry on when the primary one fails before producing any output.
+	 *
+	 * A spec like "deepseek/deepseek-flash". Only used for a failure that
+	 * happened *before* anything was streamed — switching models halfway through
+	 * a reply would either duplicate or discard what the user already saw.
+	 */
+	fallbackModel?: string;
+	/**
+	 * How many consecutive identical tool calls are allowed before the agent
+	 * refuses the next one. `0` disables the check.
+	 *
+	 * Exposed because the rule is deliberately blunt: a workflow that legitimately
+	 * polls the same command with the same arguments will trip it, and raising the
+	 * number has to be possible without editing source.
+	 */
+	loopRepeatLimit?: number;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -113,6 +130,15 @@ export function loadSettings(): Settings {
 		settings.thinkingLevel = input.thinkingLevel as ThinkingLevel;
 	}
 	if (typeof input.cwd === "string") settings.cwd = input.cwd;
+	if (typeof input.fallbackModel === "string" && input.fallbackModel.trim().length > 0) {
+		settings.fallbackModel = input.fallbackModel;
+	}
+	// `Number.isInteger` rather than a truthiness check: `0` is meaningful here
+	// (it disables the guard) and would be dropped by the usual `if (input.x)`
+	// shape, silently turning "off" into "default".
+	if (typeof input.loopRepeatLimit === "number" && Number.isInteger(input.loopRepeatLimit) && input.loopRepeatLimit >= 0) {
+		settings.loopRepeatLimit = input.loopRepeatLimit;
+	}
 	if (input.toolExecution === "parallel" || input.toolExecution === "sequential") {
 		settings.toolExecution = input.toolExecution;
 	}

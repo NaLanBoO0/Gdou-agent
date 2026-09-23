@@ -11,6 +11,12 @@
  *
  *     Body text.
  *
+ * Shared by experts and modes. It lives here rather than under either of them
+ * because both are "a markdown file that describes an agent capability", and
+ * the two must not be allowed to drift into reading frontmatter differently —
+ * a file that loads as an expert has to mean the same thing when it loads as a
+ * mode.
+ *
  * Parsed with a real YAML library rather than a hand-rolled `key: value`
  * splitter. The subset looks trivial and then is not: a description containing
  * a colon, a quoted string, a multi-line block, a value that is a list. Getting

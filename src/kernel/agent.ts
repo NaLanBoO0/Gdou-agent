@@ -17,6 +17,8 @@ import type { AgentProfile, AnyTool } from "../profiles/types.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
+import { type FallbackReport, withModelFallback } from "./fallback.ts";
+import { LoopGuard, DEFAULT_LOOP_REPEAT_LIMIT, loopBlockReason } from "./loop-guard.ts";
 import {
 	type Approver,
 	DEFAULT_PERMISSION_POLICY,
@@ -52,7 +54,17 @@ export interface CreateAgentOptions {
 	 * from an empty transcript.
 	 */
 	messages?: AgentMessage[];
-	/** Pre-loaded settings. Loaded from disk when omitted. */
+	/**
+	 * Pre-loaded settings.
+	 *
+	 * Loaded by the caller, not here: `resolveSetup` defaults an omitted value to
+	 * an empty object, so every preference (model, thinking level, permission
+	 * tier, fallback, loop guard) must be handed in by whoever builds the
+	 * session. The Electron entry once omitted this and `agent:setModel` saved a
+	 * choice to disk that the rebuilt session then ignored — the model resolved
+	 * from the mode default instead of what the user had just picked. CLI and
+	 * Electron both pass `loadSettings()` explicitly.
+	 */
 	settings?: Settings;
 	/**
 	 * Replace the streaming transport. Defaults to the resolved provider's HTTP
@@ -107,6 +119,20 @@ export interface CreateAgentOptions {
 	 * an approval channel yet should refuse rather than silently permit.
 	 */
 	approver?: Approver;
+	/**
+	 * Model spec to retry on when the primary fails before producing output.
+	 *
+	 * Falls back to settings, then to no fallback at all. See
+	 * `kernel/fallback.ts` for why "before producing output" is the condition
+	 * rather than "whenever it fails".
+	 */
+	fallbackModel?: string;
+	/**
+	 * How many consecutive identical tool calls to allow. `0` disables the check.
+	 *
+	 * Falls back to settings, then to `DEFAULT_LOOP_REPEAT_LIMIT`.
+	 */
+	loopRepeatLimit?: number;
 }
 
 /** A tool call the permission gate refused. */
@@ -154,6 +180,15 @@ export interface AgentSession {
 	 */
 	readonly denials: PermissionDenial[];
 	readonly model: Model<string>;
+	/**
+	 * The model a failed request will be retried on, when one is configured.
+	 *
+	 * Exposed rather than kept internal so a front-end can disclose it before it
+	 * is ever used: a reply that quietly came from a different model than the one
+	 * on the status line is the sort of thing a user should have been told about
+	 * in advance.
+	 */
+	readonly fallback?: Model<string>;
 	readonly runtime: ModelRuntime;
 	readonly cwd: string;
 	/** Send a user message and wait for the whole run to finish. */
@@ -178,19 +213,22 @@ interface ResolvedSetup {
 	expert?: Expert;
 	runtime: ModelRuntime;
 	model: Model<string>;
+	/** Resolved fallback model, or undefined when none is configured. */
+	fallback?: Model<string>;
 	cwd: string;
 	thinkingLevel: ThinkingLevel;
 	toolExecution: "parallel" | "sequential";
 	policy: PermissionPolicy;
+	loopRepeatLimit: number;
 }
 
 function missingCredentialsError(): Error {
 	const report = ModelRuntime.create().credentialReport();
 	return new Error(
 		[
-			"No model available: none of the configured providers has an API key.",
+			"No model available: no provider has a credential.",
 			"",
-			"Set one of these environment variables and retry:",
+			"Add one in the interface (设置 → 模型与凭据), or set an environment variable and retry:",
 			report,
 			"",
 			'Example (PowerShell):  $env:DEEPSEEK_API_KEY="sk-..."',
@@ -202,16 +240,17 @@ function missingCredentialsError(): Error {
 function resolveSetup(options: CreateAgentOptions): ResolvedSetup {
 	const settings = options.settings ?? {};
 
-	// cwd is resolved before the expert because project-level experts are found
-	// relative to it, so the working directory is an input to which expert even
-	// exists.
+	// cwd is resolved before both the mode and the expert because both are found
+	// partly relative to it: project-level mode and expert files live beside the
+	// code they describe, so the working directory is an input to which
+	// definitions even exist.
 	const cwd = options.cwd ?? settings.cwd ?? process.cwd();
 
 	// `recipe.mode` and `settings.mode` are the same thing: the mode id. The
 	// settings field used to be called `profile`; the loader still reads that
 	// name so an existing file keeps working.
 	const modeId = options.recipe?.mode ?? settings.mode ?? FALLBACK_PROFILE_ID;
-	const profile = getProfile(modeId);
+	const profile = getProfile(modeId, cwd);
 
 	// Resolved eagerly so an unknown id fails here, with the list of known ones,
 	// rather than silently producing a session that behaves like no expert.
@@ -224,8 +263,50 @@ function resolveSetup(options: CreateAgentOptions): ResolvedSetup {
 	const expert = expertId === undefined ? undefined : getExpert(expertId, cwd);
 
 	const runtime = ModelRuntime.create();
-	const model = runtime.resolveDefault(options.model ?? settings.model);
+
+	// Precedence: an explicit call-site spec, then the stored preference, then
+	// the mode's own. The mode is last because it is the shipped-or-shared
+	// layer: a file that pins a model should not override a choice the user
+	// made for themselves.
+	const modelSpec = options.model ?? settings.model ?? profile.model;
+	// Whether the spec actually came from the mode file, as opposed to merely
+	// being equal to it. A user who types a spec that happens to match their
+	// mode's must be told about *their* typo, not handed the mode's file path.
+	const fromMode = options.model === undefined && settings.model === undefined && profile.model !== undefined;
+	let model: Model<string> | undefined;
+	try {
+		model = runtime.resolveDefault(modelSpec);
+	} catch (error) {
+		// A mode may name a model, and the failure that produces is a bad line in
+		// a mode file — not a bad setting. Reported as such, because "Unknown
+		// model" on its own sends the reader through settings and the environment
+		// looking for a spec that lives somewhere else entirely.
+		if (fromMode) {
+			throw new Error(
+				`Mode "${profile.id}" names a model that does not exist: ${modelSpec}` +
+					`\n  (from ${profile.source ?? "a mode supplied in code"})`,
+			);
+		}
+		throw error;
+	}
 	if (!model) throw missingCredentialsError();
+
+	// Resolved eagerly for the same reason the primary is: an unknown spec should
+	// fail when the session is built, not halfway through a reply that the
+	// fallback was supposed to rescue. `resolveDefault` throws on an unknown
+	// spec, so a configured fallback is either resolved here or the session
+	// never starts — there is no "configured but unavailable" state to carry.
+	const fallbackSpec = options.fallbackModel ?? settings.fallbackModel;
+	let fallback: Model<string> | undefined;
+	if (fallbackSpec) {
+		try {
+			fallback = runtime.resolveDefault(fallbackSpec);
+		} catch (error) {
+			// Named as a fallback, because "Unknown model: x" alone reads like
+			// the primary is broken — and the primary is fine.
+			throw new Error(`The fallback model does not exist: ${fallbackSpec}\n  (from fallbackModel)`, { cause: error });
+		}
+	}
 
 	const recipe: SessionRecipe = { mode: profile.id };
 	if (expert) recipe.expert = expert.id;
@@ -236,6 +317,7 @@ function resolveSetup(options: CreateAgentOptions): ResolvedSetup {
 		expert,
 		runtime,
 		model,
+		...(fallback ? { fallback } : {}),
 		cwd,
 		// Precedence is deliberate: an explicit call-site option wins, then the
 		// user's stored preference, then the expert, then the mode's suggestion.
@@ -247,6 +329,7 @@ function resolveSetup(options: CreateAgentOptions): ResolvedSetup {
 			options.thinkingLevel ?? settings.thinkingLevel ?? expert?.thinkingLevel ?? profile.thinkingLevel ?? "off",
 		toolExecution: options.toolExecution ?? settings.toolExecution ?? profile.toolExecution ?? "parallel",
 		policy: options.permission ?? settings.permission ?? DEFAULT_PERMISSION_POLICY,
+		loopRepeatLimit: options.loopRepeatLimit ?? settings.loopRepeatLimit ?? DEFAULT_LOOP_REPEAT_LIMIT,
 	};
 }
 
@@ -267,22 +350,39 @@ const DEFAULT_RETRY_ATTEMPTS = 2;
  * `maxRetryDelayMs` but no `maxRetries`, so the count is injected here, at the
  * stream seam we already own.
  *
+ * The fallback wraps that transport rather than replacing it: retries first,
+ * on the same model, because a transient blip is by far the likeliest failure
+ * and switching models for it would trade a known-good model for an unknown
+ * one. Only when the retries are exhausted does a different model get a turn.
+ *
  * Exported so the injection can be asserted rather than assumed — the failure
  * mode is silent, and "the option is accepted" is not evidence that it reaches
  * the provider.
  */
-export function defaultStreamFn(runtime: ModelRuntime, maxRetries?: number): StreamFn {
-	const attempts = maxRetries ?? DEFAULT_RETRY_ATTEMPTS;
+export function defaultStreamFn(runtime: ModelRuntime, options: StreamFnOptions = {}): StreamFn {
+	const attempts = options.maxRetries ?? DEFAULT_RETRY_ATTEMPTS;
 	// `??` rather than plain assignment: an explicit per-call value should win,
 	// but the usual case is that the agent passes nothing at all, and a plain
 	// spread would then overwrite the default with `undefined`.
-	return (model, context, options) =>
-		runtime.models.streamSimple(model, context, { ...options, maxRetries: options?.maxRetries ?? attempts });
+	const primary: StreamFn = (model, context, streamOptions) =>
+		runtime.models.streamSimple(model, context, { ...streamOptions, maxRetries: streamOptions?.maxRetries ?? attempts });
+
+	return withModelFallback(primary, { fallback: options.fallback, onFallback: options.onFallback });
+}
+
+export interface StreamFnOptions {
+	/** Attempts made before giving up on a retryable failure. */
+	maxRetries?: number;
+	/** Model to retry on when the primary fails without producing output. */
+	fallback?: Model<string>;
+	/** Called once, at the moment of a switch. */
+	onFallback?: (report: FallbackReport) => void;
 }
 
 /** Wire a resolved setup plus a concrete tool set into a usable session. */
 function assemble(setup: ResolvedSetup, selection: ToolSelection, options: CreateAgentOptions): AgentSession {
-	const { recipe, profile, expert, runtime, model, cwd, thinkingLevel, toolExecution, policy } = setup;
+	const { recipe, profile, expert, runtime, model, fallback, cwd, thinkingLevel, toolExecution, policy, loopRepeatLimit } =
+		setup;
 	const { tools, unavailable } = selection;
 
 	const denials: PermissionDenial[] = [];
@@ -296,6 +396,16 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 	 * deleted when the call finishes — this is per-call state, not a cache.
 	 */
 	const snapshots = new Map<string, string | undefined>();
+
+	/**
+	 * Detects a model that is issuing the same call over and over.
+	 *
+	 * One instance per session, because the rule is about consecutive calls
+	 * within one conversation — a count shared across sessions would refuse a
+	 * legitimate first call. See `kernel/loop-guard.ts` for why the rule is
+	 * consecutive rather than cumulative, and for the blind spot that buys.
+	 */
+	const loopGuard = new LoopGuard(loopRepeatLimit);
 
 	const listeners = new Set<AgentEventListener>();
 	const emit = (event: AgentEvent) => {
@@ -327,7 +437,24 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 			// the agent leaves it alone rather than prepending a second one.
 			messages: options.messages,
 		},
-		streamFn: options.streamFn ?? defaultStreamFn(runtime, options.maxRetries),
+		streamFn:
+			options.streamFn ??
+			defaultStreamFn(runtime, {
+				maxRetries: options.maxRetries,
+				fallback,
+				// Announced at the moment of the switch, not afterwards: the whole
+				// point of disclosing a fallback is that the user knows which model
+				// wrote the reply they are reading. Telling them once it is over
+				// would be a footnote rather than a disclosure. A caller-supplied
+				// `streamFn` bypasses this entirely — the wrapper only exists on the
+				// transport this module builds.
+				onFallback: (report: FallbackReport) => {
+					emit({
+						type: "notice",
+						message: `\`${report.from}\` 在产出任何内容之前就失败了（${report.reason}），已改用 \`${report.to}\` 重试。`,
+					});
+				},
+			}),
 		toolExecution,
 		// The permission gate. Attached at pi's `beforeToolCall` seam rather
 		// than by wrapping the tools themselves: a wrapper would have to be
@@ -342,6 +469,18 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 			);
 
 			if (decision.kind === "allow") {
+				// Checked after the gate, never before, and that order carries
+				// meaning: a call the permission chain refused never reaches the
+				// provider, so it is not evidence of a stuck model. Counting it
+				// would let a mode that is merely being denied look like a loop,
+				// and blaming the model for the gate's answer is the wrong report.
+				const repeat = loopGuard.record(context.toolCall.name, context.args);
+				if (repeat.blocked) {
+					const reason = loopBlockReason(context.toolCall.name, repeat.repeats);
+					emit({ type: "notice", message: `已拦截 \`${context.toolCall.name}\`（重复调用）：${reason}` });
+					return { block: true, reason };
+				}
+
 				// Snapshot only for calls that are actually going to run: taking
 				// one for a call the gate refuses would be a read with no
 				// purpose, and the whole point of the gate is that it decides.
@@ -431,6 +570,7 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 		policy,
 		denials,
 		model,
+		...(fallback ? { fallback } : {}),
 		runtime,
 		cwd,
 		async prompt(text: string) {
@@ -455,7 +595,7 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 
 /**
  * Build a session. Async because a profile may construct tools asynchronously;
- * today both built-in profiles are synchronous, but the signature leaves room.
+ * today the built-in profiles are synchronous, but the signature leaves room.
  */
 export async function createAgent(options: CreateAgentOptions = {}): Promise<AgentSession> {
 	const setup = resolveSetup(options);

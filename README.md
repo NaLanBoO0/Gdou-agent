@@ -3,7 +3,14 @@
 一个跑在你自己机器上的桌面 agent，基于 [pi](https://pi.dev) 内核
 （`pi-ai` + `pi-agent-core` + `pi-coding-agent`）。
 
-自带 API key，对话和文件都留在本机，不经过任何服务器。
+API key 自己提供、存在本机（`~/.gdou-agent/auth.json`），对话记录和文件也留在本机，
+所以不存在「我们替你保存对话」这回事。
+
+**但消息内容会发给你自己选的那个服务商** —— 那就是模型本身，这一步是它的工作方式，
+不是额外的上报或中转。除此之外没有任何第三方服务器参与。
+
+> 想真正开始对话，得先在界面上填一把 key：侧栏 **设置**（`Ctrl+5`）→ 找到你的服务商 → 粘贴 → 保存。
+> 不填的话，应用能打开、能浏览，但每次启动会话都会告诉你「No model available」。
 
 ![对话界面](docs/screenshots/chat-conversation.png)
 
@@ -14,7 +21,9 @@
 - **联网** —— 抓网页正文、搜索（Brave / Tavily）
 - **交付产物** —— agent 显式把文件交给你，界面里直接预览（HTML 活预览 / 图片 / 文本）
 - **专家** —— 用 markdown 写一个人格，附在会话上（随包三个示例）
-- **两种模式** —— `general`（日常任务，不碰文件）、`coding`（仓库开发）
+- **模式** —— 决定 agent 能做什么，同样是一个 markdown 文件。随包 `general`（日常任务，不碰文件）与 `coding`（仓库开发），自己加一个 = 加一个文件
+- **模型与凭据** —— 界面上直接填 key（侧栏「设置」，`Ctrl+5`），编写器右下角点模型名就在已配置的服务商之间切换；key 只以掩码显示，没有「读回我的 key」这个通道
+- **扛得住** —— 连着重复的同一次调用会被拦下并告知模型；provider 在产出内容前挂掉会自动换到备用模型
 
 三种入口共用同一个内核：无界面 CLI、终端 TUI、桌面 GUI（可打包成 exe）。
 
@@ -178,6 +187,14 @@ npm run gui
 npm run package
 ```
 
+`npm run gui` 走的是 `scripts/launch-gui.mjs`，不是直接 `electron .`——它要先删掉两个会阻止 Electron 启动的环境变量，而 npm script 没有跨平台的写法能做这件事。从 VS Code / Cursor 这类编辑器（或者本项目自己的 agent 宿主）的**内置终端**里跑，环境里就带着 `ELECTRON_RUN_AS_NODE=1`，于是 Electron 以纯 Node 启动，`require("electron")` 拿到的是**二进制路径**而不是 API，报错是
+
+```
+TypeError: Cannot read properties of undefined (reading 'isPackaged')
+```
+
+指着一行没人写错的代码。`NODE_OPTIONS` 是同一类泄漏（里面的 `--require` 钩子能遮蔽 `electron` 模块）。删的时候要 `delete` 而不是置空——**空字符串仍然算「已设置」**，故障原样复现，于是修复看起来像没生效。`check:gui` 出于同样的理由做同样的事。
+
 **跑打包产物而不安装**：`npm run package:dir` 出 `release/win-unpacked/GDOU-agent.exe`，是一个自包含的应用目录，双击即可运行。让桌面快捷方式指向它：
 
 ```bash
@@ -225,7 +242,8 @@ AgentSession.subscribe(AgentEvent) → webContents.send → preload contextBridg
 ### 对话会留下来
 
 关掉窗口不再等于丢掉对话，开一个新话题也不再冲掉上一段。一段对话一个文件，存在
-`~/.gdou-agent/sessions/`，启动时自动打开最近的一段，状态行会标出恢复了多少条消息。
+`~/.gdou-agent/sessions/`。启动时默认进**新的空对话**——历史不会自己跳出来挡在眼前，
+但它就在左下角（或右上角）的历史列表里，点一下即恢复，状态行会标出恢复了多少条消息。
 
 右上角的「历史」列出所有对话——标题取自每段的第一条用户消息，带相对时间和消息条数——
 点一条切过去，点「改名」改标题，点 × 删掉。「新对话」开始新的一段，**旧的那段留在列表里**。
@@ -398,6 +416,7 @@ gdou-agent/
     pi-env.mjs          开发态预加载：把 pi 的状态目录钉到本项目
     fetch-tools.mjs     按固定版本抓取 ripgrep / fd 到 vendor/bin
     build.mjs           esbuild 打包：main.cjs / preload.cjs / cli.cjs
+    launch-gui.mjs      启动桌面应用：清掉会阻止 Electron 起步的环境变量再派生
     package.mjs         跑 electron-builder，并把二进制下载指向镜像
     shortcut.mjs        把桌面快捷方式指向本项目里的构建
     smoke.ts            内核的离线自测
@@ -421,16 +440,19 @@ gdou-agent/
       sessions.ts       会话落盘与恢复（一会话一文件，原子写）
       toolchain.ts      工具链目录 + 随包二进制投放
       demo.ts           脚本化运行：无凭据也能跑一轮
+    definitions/
+      frontmatter.ts    markdown frontmatter 解析（模式与专家共用）
+      directory.ts      读一个目录里的 *.md 定义（模式与专家共用）
     experts/
       types.ts          Expert 契约
-      frontmatter.ts    markdown frontmatter 解析
       builtin.ts        随包的三个示例专家（也是 markdown，走同一个解析器）
       registry.ts       三级加载：项目级 > 用户级 > 内置
-    profiles/
+    profiles/           模式层（代码里仍沿用 profile 这个名字）
       types.ts          AgentProfile 契约
-      registry.ts       id -> profile 查找
-      general.ts        日常任务
-      coding.ts         仓库开发
+      builtin.ts        随包的 general / coding，内联 markdown
+      loader.ts         markdown -> 模式（工具名在这里解析成工具）
+      tool-catalog.ts   工具名 -> 工厂：一个模式文件能引用到哪些工具
+      registry.ts       三级加载 + 编程注入，按 id 查找
     tools/
       time.ts           无状态示例工具
       notes.ts          有状态示例工具（自带存储）
@@ -566,6 +588,93 @@ prompt 也可以从 stdin 来：`echo "explain closures" | gdou-agent -p general
 不带 prompt 时会启动交互界面。`--json` 永远不会打开它，因为这个参数是脚本化契约。
 传了 `-p` 则跳过启动时的模式选择器。
 
+## 模式
+
+模式决定 agent **能做什么**，专家决定它**怎么做**。两者正交，一个会话是二者的
+组合（`SessionRecipe`），所以专家只能在模式允许的工具里做减法。
+
+模式也是 markdown 文件，位置和专家平行：
+
+```
+~/.gdou-agent/modes/<id>.md          用户级
+<cwd>/.gdou-agent/modes/<id>.md      项目级，同名时优先
+```
+
+```markdown
+---
+name: 审查
+description: 只读审查改动，不修改任何文件
+tools: [read, grep, find, ls]        # 必填
+thinkingLevel: high                   # 可选
+toolExecution: sequential             # 可选：parallel | sequential
+model: deepseek/deepseek-v4-pro       # 可选，只是建议
+---
+
+你负责审查这次改动。先搞清楚它想做什么，再判断它做到了没有。
+```
+
+正文就是系统提示词。工作目录与当前时间由内核**追加**在正文之后——这两样是事实，
+不是模式的观点，所以不该由写文件的人去记得。
+
+`model` 是**建议，不是设置**，优先级最低：显式选项 > `settings.json` > 模式。
+点名一个只在它上面才表现好的模型是有用的（长文摘要要大窗口），
+但让一个用户可能没写过的文件**静默压过用户自己的选择**，是最快让人不再信任配置文件的办法。
+spec 写错时会在会话启动那一刻报错，并且**点名模式和它来自哪个文件**：
+
+```
+fatal: Mode "broken" names a model that does not exist: deepseek/depseek-flash
+  (from ~/.gdou-agent/modes/broken.md)
+```
+
+光一句 "Unknown model" 会把人支使去翻设置和环境变量，而那个 spec 住在一个完全不同的地方。
+
+**`tools` 是必填的，而且只能填已知的工具名。** 工具的集合在
+`src/profiles/tool-catalog.ts` 里，目前是 pi 的 `read` / `bash` / `edit` / `write` /
+`grep` / `find` / `ls` / `powershell`，加上本项目的 `current_time` / `save_note` /
+`list_notes` / `present_files` / `web_fetch` / `web_search`。
+
+这里有一条**不夸大的边界**：「加一个模式 = 加一个文件」对**组合已有工具**的模式
+成立；需要一个还不存在的工具的模式，仍然要写代码并登记进工具目录。
+工具就是代码，而数据文件不能凭空提供代码。
+
+顺带一提：内置的两个模式也是 markdown，走的是同一个解析器（`builtin.ts` 里是内联
+字符串，因为 `scripts/build.mjs` 只拷 `renderer/`，`resources/` 不参与构建，
+打包后会读不到）。内置与用户文件的格式因此不会各自漂移。
+
+## 稳定性
+
+两件「没人盯着的时候会出事」的事，各有一个开关，都在 `~/.gdou-agent/settings.json` 里。
+
+### 重复调用守卫
+
+模型有时候会认定某个工具调用就是答案，拿到不满意的结果之后**发出完全一样的一次调用**。
+第二次和第一次没有任何差别，结果也不会有。默认连着 3 次之后拦下，理由作为一条 error
+工具结果回给模型——**和别的工具结果出现在同一个位置**，所以它知道该换个办法。
+
+```json
+{ "loopRepeatLimit": 3 }
+```
+
+`0` 关掉它。规则故意是钝的，一个合法地轮询同一条命令、参数还一样的工作流会误触，
+所以调高和关掉都要能不改代码做到。
+
+**规则是「连续」不是「累计」**：连着重复 3 次是卡住；一次会话里总共出现 3 次通常只是干活
+（跑测试、改代码、再跑测试）。代价是一个**已知盲区**——交替循环（读 A、读 B、读 A、读 B）
+永远抓不到。
+
+### 备用模型
+
+一个 provider 过载，或者某个区域网络不好，整轮对话就跟着它一起死。配一个备用模型就多一层救援：
+
+```json
+{ "fallbackModel": "deepseek/deepseek-v4-pro" }
+```
+
+**只在「产出任何内容之前」失败时才切**。回复一旦开始流式输出，用户已经看到了——
+静默换模型重来，要么重复那句话的开头，要么替换掉屏幕上的文字。所以第一个 token 之后的失败
+原样报出来。切换发生时会发一条提示，并且当前模型与备用模型都显示在界面里
+（GUI 检查器、TUI 状态行），因为**一个悄悄来自别的模型的回复，用户本该在使用之前就知道有可能**。
+
 ## 添加工具
 
 把 schema 声明为具名 const，让 `params` 能被推断出来，然后用
@@ -589,19 +698,11 @@ export const weatherTool: AgentTool<typeof schema, { tempC: number }> = {
 如果改成注解 `AgentTool<any>`，`params` 会被拓宽成 `unknown`，`execute` 的签名
 立刻 typecheck 不过。`src/tools/time.ts` 是一个完整的可参考例子。
 
-## 添加模式
+写完还要在 `src/profiles/tool-catalog.ts` 里登记一个名字，模式文件才引用得到它。
+需要工作目录的工具（pi 的那批）用工厂 `(cwd) => ...`，无状态的工具返回共享实例。
 
-实现 `AgentProfile`，并在第一个 agent 被创建之前注册它：
-
-```ts
-registerProfile({
-  id: "research",
-  label: "Research",
-  description: "Long-form research with web access.",
-  systemPrompt: ({ cwd }) => `You are a research assistant. Working directory: ${cwd}`,
-  tools: () => [searchTool, fetchTool],
-});
-```
+要在代码里造一个 markdown 表达不了的模式（比如工具是运行时才拼出来的），
+用 `registerProfile()`；它排在所有来源之后，也就是优先级最高。
 
 ## 验证
 
@@ -678,23 +779,27 @@ DEEPSEEK_API_KEY=sk-invalid npm run run -- -p general "hi"
 
 | 路径 | 内容 |
 |---|---|
-| `~/.gdou-agent/settings.json` | 默认模式、模型、思考等级、工作目录 |
+| `~/.gdou-agent/settings.json` | 默认模式、模型、思考等级、工作目录、备用模型、重复调用上限 |
 | `~/.gdou-agent/notes.json` | 草稿纸笔记 |
 | `~/.gdou-agent/sessions/<id>.json` | 一段对话一个文件，两行 JSON（摘要 + 记录） |
+| `~/.gdou-agent/experts/<id>.md` | 你自己写的专家 |
+| `~/.gdou-agent/modes/<id>.md` | 你自己写的模式 |
 | `~/.gdou-agent/agent/bin/` | 随包投放的 ripgrep 与 fd（pi 的目录，被 piConfig 挪到这里） |
 
-用 `GDOU_AGENT_HOME` 覆盖前三个的位置。
+用 `GDOU_AGENT_HOME` 覆盖前五个的位置。API key 不在这个目录里，见
+`docs/state-and-migration.md`。
 
 ## 下一步
 
 内核、CLI、TUI、桌面 GUI、对话界面、会话持久化与多会话（含改名）、工作目录选择、
-上下文裁剪与告知、无凭据预览、安装包都已经可用。
+上下文裁剪与告知、无凭据预览、安装包、专家、模式、重复调用守卫、备用模型、
+按模式选模型都已经可用。
 
 **还没做的：**
 
-1. **接真实 provider 跑一轮**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。这一条需要你的 key，我无法自己完成。
-
-**待设计的三个自定义功能**：可复用的自动化项目、专家人格、skills。它们要挂的接缝
-已经存在——profile 注册表就是模式层，归一化事件流是视图唯一依赖的东西，
-`TuiApp` 持有唯一的全局按键处理器，GUI 侧对应 `renderer/`。尚未确定的是这些功能
-本身的形态，那是一次设计讨论，而不是实现问题。
+1. **接真实 provider 跑一轮**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。这一条需要你的 key，我无法自己完成。备用模型落地之后这一条更值得做了——它正是「provider 抖一下整轮就没了」的解法，而脚本化运行永远复现不出真实的 429 / 502。
+2. **skills**。三个自定义功能里唯一真正新的机制：会话开始时上下文里只放每个 skill 的
+   名字和一句话描述，任务匹配后 agent 才把正文读进来。不这么做的话，几十个 skill
+   全文进系统提示就是几十万 token。按目前的决定：只允许说明和资源文件，不允许可执行脚本。
+3. **自动化项目**。它本身就是「配方 + 提示词 + 触发时机」，前两样（组合模型、模式与
+   专家的组合）现在都在了。按目前的决定：只做运行时触发，产出算单独一个概念。

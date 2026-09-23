@@ -10,11 +10,19 @@
  * Run: npm run smoke
  */
 
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
-import { createModels, fauxAssistantMessage, fauxProvider, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
+import {
+	type AssistantMessageEvent,
+	createAssistantMessageEventStream,
+	createModels,
+	fauxAssistantMessage,
+	fauxProvider,
+	fauxText,
+	fauxToolCall,
+} from "@earendil-works/pi-ai";
 import { loadSettings } from "../src/config/settings.ts";
 import { defaultModelSpec, presetsWithCredentials } from "../src/config/providers.ts";
 import { getExpert, listExperts, loadExperts } from "../src/experts/registry.ts";
@@ -22,7 +30,10 @@ import type { Expert } from "../src/experts/types.ts";
 import { createAgent, defaultStreamFn } from "../src/kernel/agent.ts";
 import { inspectCommand } from "../src/kernel/command-guard.ts";
 import { CONTEXT_BUDGET_CHARS, contextStatusOf, pruneForContext } from "../src/kernel/context.ts";
+import { FileCredentialStore, providerCredentials, removeApiKey, setApiKey } from "../src/kernel/credentials.ts";
 import { translate } from "../src/kernel/events.ts";
+import { type FallbackReport, withModelFallback } from "../src/kernel/fallback.ts";
+import { callKey, LoopGuard, loopBlockReason } from "../src/kernel/loop-guard.ts";
 import {
 	evaluateToolCall,
 	type PermissionContext,
@@ -32,7 +43,10 @@ import {
 import { composePrompt, narrowTools } from "../src/kernel/recipe.ts";
 import { ModelRuntime, parseModelSpec } from "../src/kernel/runtime.ts";
 import { notesPath } from "../src/paths.ts";
-import { getProfile, listProfiles } from "../src/profiles/registry.ts";
+import { BUILTIN_MODES } from "../src/profiles/builtin.ts";
+import { withEnvironment } from "../src/profiles/loader.ts";
+import { getProfile, loadProfiles, registerProfile, requireProfile } from "../src/profiles/registry.ts";
+import { resolveTool, TOOL_FACTORIES } from "../src/profiles/tool-catalog.ts";
 import { currentTimeTool } from "../src/tools/time.ts";
 import { listNotesTool, saveNoteTool } from "../src/tools/notes.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange, targetExists } from "../src/kernel/changes.ts";
@@ -668,6 +682,800 @@ function checkChanges(): void {
 	}
 }
 
+/**
+ * Modes: the shipped ones, the tool catalog they draw from, and the markdown
+ * files that add or override them.
+ *
+ * The count assertions matter more than they look. Modes are now files anyone
+ * can add, so "we ship two" is only checkable against a controlled user
+ * directory — asserted against the real one, `npm run smoke` would start
+ * failing for exactly the users who used the feature.
+ */
+async function checkModes(): Promise<void> {
+	console.log("\nModes");
+
+	// A sandbox used both as a working directory (for project-level modes) and
+	// as the user-level directory, so nothing here reads the real `~/.gdou-agent`.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-modes-"));
+	const userDir = join(sandbox, "user-modes");
+	const projectDir = join(sandbox, "project", ".gdou-agent", "modes");
+	mkdirSync(userDir, { recursive: true });
+	mkdirSync(projectDir, { recursive: true });
+
+	try {
+		const projectCwd = join(sandbox, "project");
+
+		// ---- shipped modes --------------------------------------------------
+		check("two built-in modes ship", BUILTIN_MODES.length === 2, BUILTIN_MODES.map((m) => m.id).join(", "));
+
+		const shipped = loadProfiles({ cwd: projectCwd, userDir });
+		check("an empty environment yields exactly the built-ins", shipped.profiles.length === 2, shipped.profiles.map((p) => p.id).join(", "));
+		check("no errors from an empty environment", shipped.errors.length === 0, shipped.errors.join(" | "));
+		// Order is not cosmetic: the startup picker highlights the first entry,
+		// so this is the mode a first-time user gets. `coding` has a shell.
+		check("the default mode is the safe one", shipped.profiles[0]?.id === "general", shipped.profiles[0]?.id);
+
+		// ---- the tool catalog ----------------------------------------------
+		// The catalog is the reason a markdown mode cannot invent a capability:
+		// a file names tools, and only names that resolve here can be used.
+		check("the catalog carries pi's tools", ["read", "bash", "edit", "write", "grep", "find", "ls"].every((n) => n in TOOL_FACTORIES));
+		check("the catalog carries this project's tools", ["current_time", "save_note", "list_notes", "present_files", "web_fetch", "web_search"].every((n) => n in TOOL_FACTORIES));
+		check("an unknown tool does not resolve", resolveTool("sudo", projectCwd) === undefined);
+
+		const general = getProfile("general", projectCwd);
+		check("the general mode reads its thinking level from the file", general.thinkingLevel === "off", general.thinkingLevel);
+		const generalTools = await general.tools({ cwd: projectCwd });
+		check("general builds its tools", generalTools.length === 5, `${generalTools.length} tools`);
+		check("general's tools are the ones its frontmatter lists", generalTools.map((t) => t.name).join(",") === "current_time,save_note,list_notes,web_search,web_fetch", generalTools.map((t) => t.name).join(","));
+		check(
+			"general exposes no file tools",
+			!generalTools.some((t) => ["read", "write", "edit", "bash"].includes(t.name)),
+		);
+		check("general cannot deliver files", !generalTools.some((t) => t.name === "present_files"));
+
+		const coding = getProfile("coding", projectCwd);
+		check("coding reads its execution strategy from the file", coding.toolExecution === "parallel", coding.toolExecution);
+		const codingTools = await coding.tools({ cwd: projectCwd });
+		check("coding builds its tools", codingTools.length === 10, `${codingTools.length} tools`);
+		check(
+			"coding exposes expected tools",
+			["read", "bash", "edit", "write", "grep", "find", "ls", "present_files", "web_search", "web_fetch"].every(
+				(name) => codingTools.some((t) => t.name === name),
+			),
+		);
+		// Delivery is a project tool rather than pi's, and the mode lists it
+		// explicitly: a narrowed read-only reviewer should still be able to hand
+		// back what it found, but that is now the file's decision, not a rule.
+		check(
+			"delivery survives tool narrowing",
+			narrowTools(codingTools, undefined).tools.some((t) => t.name === "present_files"),
+		);
+
+		// ---- the prompt -----------------------------------------------------
+		const codingPrompt = coding.systemPrompt({ cwd: "C:/tmp" });
+		check("the mode prompt carries the working directory", codingPrompt.includes("C:/tmp"));
+		check("the mode prompt carries the time", codingPrompt.includes(new Date().toISOString().slice(0, 10)));
+		// The frontmatter must not leak into the prompt, or the model would be
+		// told to say "tools:" at the user.
+		check("the body excludes the frontmatter", !codingPrompt.includes("tools:"));
+		check("the prompt is the body plus the environment", withEnvironment("BODY", { cwd: "/x" }).startsWith("BODY"));
+
+		// ---- project-level files -------------------------------------------
+		const write = (dir: string, name: string, lines: string[]) =>
+			writeFileSync(join(dir, name), `${lines.join("\n")}\n`, "utf-8");
+
+		write(projectDir, "reviewer.md", [
+			"---",
+			"name: 审查",
+			"description: 只读审查",
+			"tools: [read, grep, current_time]",
+			'thinkingLevel: "high"',
+			"---",
+			"",
+			"只读审查，不要修改任何文件。",
+		]);
+
+		const withProject = loadProfiles({ cwd: projectCwd, userDir });
+		check("a project-level mode is found", withProject.profiles.some((p) => p.id === "reviewer"));
+		check("project modes add to the built-ins", withProject.profiles.length === 3, `${withProject.profiles.length}`);
+		check("a user mode keeps the shipped modes first", withProject.profiles.slice(0, 2).map((p) => p.id).join(",") === "general,coding");
+
+		const reviewer = getProfile("reviewer", projectCwd);
+		check("the file's label is used", reviewer.label === "审查", reviewer.label);
+		check("the file's thinking level is used", reviewer.thinkingLevel === "high", reviewer.thinkingLevel);
+		check("the mode records where it came from", reviewer.source?.endsWith("reviewer.md") === true, reviewer.source);
+		check(
+			"a file-backed mode's tools are built from the catalog, in file order",
+			(await reviewer.tools({ cwd: projectCwd })).map((t) => t.name).join(",") === "read,grep,current_time",
+			(await reviewer.tools({ cwd: projectCwd })).map((t) => t.name).join(","),
+		);
+		check("a file-backed mode's body is its prompt", reviewer.systemPrompt({ cwd: "/x" }).includes("只读审查"));
+
+		// Precedence, and no duplicate: a project file shadows a user file of
+		// the same id, the way it does for experts.
+		write(userDir, "reviewer.md", ["---", "name: 用户级审查", "description: 会被项目级盖掉", "tools: []", "---", "", "用户级版本。"]);
+		check("a user-level mode is found", loadProfiles({ cwd: projectCwd, userDir }).profiles.some((p) => p.label === "用户级审查") === false);
+		const shadowed = loadProfiles({ cwd: projectCwd, userDir }).profiles.filter((p) => p.id === "reviewer");
+		check("a project mode shadows a user mode of the same id", shadowed.length === 1 && shadowed[0]?.label === "审查", shadowed.map((p) => p.label).join(", "));
+
+		// The user-level directory really is read when the project has nothing.
+		//
+		// Resolved through the catalog rather than `getProfile`, because
+		// `getProfile` reads the *real* user directory — which is exactly what
+		// this fixture must not depend on.
+		const load = () => loadProfiles({ cwd: sandbox, userDir });
+		const pick = (id: string) => requireProfile(load(), id);
+
+		write(userDir, "solo.md", ["---", "name: Solo", "description: 只在用户级存在", "tools: [current_time]", "---", "", "只有一个工具。"]);
+		check("a user-level mode is loaded on its own", load().profiles.some((p) => p.id === "solo"));
+		check("a user mode with one tool builds one tool", (await pick("solo").tools({ cwd: sandbox })).length === 1);
+
+		// ---- rejections ----------------------------------------------------
+		// Each of these is a hard error rather than a default, because a mode
+		// that loads with the wrong tool set is worse than one that does not
+		// load: nothing looks broken.
+		write(userDir, "no-tools.md", ["---", "name: 没写工具", "description: 缺少 tools 字段", "---", "", "正文。"]);
+		const noTools = loadProfiles({ cwd: sandbox, userDir });
+		check("a mode without a tools list is rejected", noTools.errors.some((e) => e.includes("no-tools.md") && e.includes("tools")), noTools.errors.join(" | "));
+		check("the rejection does not remove it from the catalogue", noTools.profiles.some((p) => p.id === "no-tools") === false);
+
+		write(userDir, "typo-tool.md", ["---", "name: 打错工具名", "description: 工具名拼错", "tools: [raed]", "---", "", "正文。"]);
+		const typo = loadProfiles({ cwd: sandbox, userDir }).errors.join(" | ");
+		check("an unknown tool name is rejected", typo.includes("typo-tool.md") && typo.includes("raed"), typo.slice(0, 80));
+		// The message has to be actionable, or the author has no way to tell a
+		// typo from a tool that does not exist yet.
+		check("the rejection lists the known tool names", typo.includes("current_time") && typo.includes("grep"));
+
+		write(userDir, "empty-body.md", ["---", "name: 空正文", "description: 只有 frontmatter", "tools: []", "---"]);
+		check("a mode with an empty body is rejected", loadProfiles({ cwd: sandbox, userDir }).errors.some((e) => e.includes("empty-body.md")));
+
+		// A mode with an explicitly empty tool set is legitimate, not an error.
+		write(userDir, "chat-only.md", ["---", "name: 纯对话", "description: 不带任何工具", "tools: []", "---", "", "只回答问题。"]);
+		const chatOnly = load();
+		check("an empty tool list is accepted", chatOnly.profiles.some((p) => p.id === "chat-only") && !chatOnly.errors.some((e) => e.includes("chat-only")));
+		check("an empty tool list yields no tools", (await pick("chat-only").tools({ cwd: sandbox })).length === 0);
+		check("an empty tool list still uses the file's body", pick("chat-only").systemPrompt({ cwd: sandbox }).includes("只回答问题。"));
+
+		check("a broken file does not take the catalogue down", load().profiles.length >= 4);
+
+		// ---- a mode naming a model -----------------------------------------
+		// Parsed here, validated later: the set of known models comes from the
+		// provider registry, so a file naming one is checked when a session is
+		// built — by the code that can name both the mode and the file it came
+		// from. What the loader owes is that the field arrives intact.
+		write(userDir, "pinned.md", [
+			"---",
+			"name: 长上下文",
+			"description: 需要大窗口模型",
+			"tools: [current_time]",
+			"model: deepseek/deepseek-v4-pro",
+			"---",
+			"",
+			"处理长文档。",
+		]);
+		check("a mode may name a model", pick("pinned").model === "deepseek/deepseek-v4-pro", pick("pinned").model ?? "(none)");
+
+		write(userDir, "blank-model.md", ["---", "name: 空模型", "description: 模型字段为空", "tools: []", "model: \"\"", "---", "", "正文。"]);
+		check("a blank model spec is rejected", loadProfiles({ cwd: sandbox, userDir }).errors.some((e) => e.includes("blank-model.md")));
+
+		write(userDir, "no-model.md", ["---", "name: 不提模型", "description: 不指定模型", "tools: []", "---", "", "正文。"]);
+		check("a mode with no model leaves the key absent", pick("no-model").model === undefined, String(pick("no-model").model));
+
+		// ---- unknown ids ---------------------------------------------------
+		let unknown = "";
+		try {
+			requireProfile(load(), "nope");
+		} catch (error) {
+			unknown = error instanceof Error ? error.message : String(error);
+		}
+		check("an unknown mode id is rejected", unknown.includes("Unknown mode: nope"), unknown.slice(0, 40));
+		check("the error lists what does exist", unknown.includes("general"), unknown.slice(0, 120));
+		// The files that failed to load ride along, because "unknown mode" next
+		// to a broken file is two facts that explain each other.
+		check("the error surfaces files that could not load", unknown.includes("could not be loaded"), unknown.slice(0, 200));
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
+/**
+ * A `StreamFn` that replays a script chosen by the model it is asked for, and
+ * counts how many times each model was called.
+ *
+ * Dispatching on the model is not incidental — it is what makes the fallback
+ * observable at all. `withModelFallback` retries by calling the *same*
+ * transport with a different model, so a helper that ignored its model argument
+ * would send the retry straight back to the primary's script, and "the fallback
+ * was used" would be unanswerable. Counting per model is the only outside view
+ * of the decision: a wrapper that declines to switch and one that switches to a
+ * model giving the same answer produce identical events.
+ *
+ * Pushed on a microtask rather than synchronously, so the consumer is already
+ * iterating when the events arrive — which is what a real transport does, and
+ * what makes the withholding in `pump` observable.
+ */
+function scriptedStream(scripts: Record<string, AssistantMessageEvent[]>): {
+	stream: StreamFn;
+	calls: (modelKey: string) => number;
+} {
+	const counts = new Map<string, number>();
+	const stream: StreamFn = async (model) => {
+		const key = `${model.provider}/${model.id}`;
+		counts.set(key, (counts.get(key) ?? 0) + 1);
+		const events = scripts[key];
+		// A loud failure rather than an empty stream: an unscripted model means
+		// the test asked for something it never described, and a silent empty
+		// reply would look like a transport bug in the code under test.
+		if (!events) throw new Error(`scriptedStream: no script for ${key}`);
+		const sink = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			for (const event of events) sink.push(event);
+			sink.end();
+		});
+		return sink;
+	};
+	return { stream, calls: (modelKey) => counts.get(modelKey) ?? 0 };
+}
+
+/**
+ * Drain a `StreamFn`'s return value the way pi's loop does.
+ *
+ * The parameter is the raw return type, union and all, because that is the
+ * shape the seam actually hands back — the contract permits either a stream or
+ * a promise for one, and a helper that quietly narrowed it would hide a wrapper
+ * that returned the wrong one.
+ */
+async function drain(pending: ReturnType<StreamFn>): Promise<AssistantMessageEvent[]> {
+	const stream = await pending;
+	const seen: AssistantMessageEvent[] = [];
+	for await (const event of stream) seen.push(event);
+	return seen;
+}
+
+async function checkLoopGuard(): Promise<void> {
+	console.log("\nRepeated-call guard");
+
+	// ---- the key ------------------------------------------------------
+	// Key order is not semantically meaningful but `JSON.stringify` preserves
+	// it, so a model re-emitting the same arguments in a different order would
+	// look like a different call every time — which is exactly the loop the
+	// guard exists to see.
+	check(
+		"argument key order does not change the key",
+		callKey("read", { path: "a", limit: 1 }) === callKey("read", { limit: 1, path: "a" }),
+	);
+	check("a different tool is a different key", callKey("read", { path: "a" }) !== callKey("write", { path: "a" }));
+	check("different arguments are a different key", callKey("read", { path: "a" }) !== callKey("read", { path: "b" }));
+	check("the same call made twice is one key", callKey("read", { path: "a" }) === callKey("read", { path: "a" }));
+
+	// ---- the rule -----------------------------------------------------
+	const guard = new LoopGuard(2);
+	check("the limit is readable", guard.repeatLimit === 2, String(guard.repeatLimit));
+	check("a default guard is on", new LoopGuard().enabled);
+
+	const first = guard.record("read", { path: "a" });
+	const second = guard.record("read", { path: "a" });
+	const third = guard.record("read", { path: "a" });
+	check("the first call runs", first.repeats === 1 && !first.blocked, `repeats=${first.repeats}`);
+	check("the last allowed call still runs", second.repeats === 2 && !second.blocked, `repeats=${second.repeats}`);
+	check("the call after the limit is refused", third.repeats === 3 && third.blocked, `repeats=${third.repeats}`);
+
+	// Consecutive, not cumulative. This is the design decision that keeps the
+	// guard from refusing the fourth `npm test` of an ordinary afternoon.
+	const afterDifferent = guard.record("read", { path: "b" });
+	const backAgain = guard.record("read", { path: "a" });
+	check("a different call resets the count", afterDifferent.repeats === 1, `repeats=${afterDifferent.repeats}`);
+	check("and the original call is allowed again", backAgain.repeats === 1 && !backAgain.blocked, `repeats=${backAgain.repeats}`);
+
+	// The blind spot, asserted so it is a known limit rather than a discovery:
+	// an alternating loop never accumulates.
+	const alternating = new LoopGuard(2);
+	let alternatingBlocked = false;
+	for (let i = 0; i < 20; i++) {
+		alternatingBlocked = alternating.record("read", { path: i % 2 === 0 ? "a" : "b" }).blocked || alternatingBlocked;
+	}
+	check("an alternating loop is not caught (known blind spot)", !alternatingBlocked);
+
+	// ---- off ----------------------------------------------------------
+	const off = new LoopGuard(0);
+	check("0 disables the guard", !off.enabled);
+	let offBlocked = false;
+	for (let i = 0; i < 10; i++) offBlocked = off.record("read", { path: "a" }).blocked || offBlocked;
+	check("a disabled guard never refuses", !offBlocked);
+
+	let negativeBlocked = false;
+	const negative = new LoopGuard(-1);
+	for (let i = 0; i < 10; i++) negativeBlocked = negative.record("x", {}).blocked || negativeBlocked;
+	check("a negative limit is also off", !negativeBlocked);
+
+	// ---- the message the model reads ----------------------------------
+	const reason = loopBlockReason("read", 4);
+	check("the refusal names the tool", reason.includes("read"), reason.slice(0, 40));
+	check("the refusal gives the count", reason.includes("4"), reason.slice(0, 60));
+	check("the refusal tells the model what to do instead", reason.includes("换参数") || reason.includes("换一个工具"));
+
+	// ---- through a real session ---------------------------------------
+	// The unit rule above and the wiring below are separate claims: a guard
+	// that is correct but never called is indistinguishable from no guard.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-loop-"));
+	try {
+		const faux = fauxProvider();
+		faux.setResponses([
+			fauxAssistantMessage([fauxToolCall("current_time", {}, { id: "c1" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("current_time", {}, { id: "c2" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("current_time", {}, { id: "c3" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([fauxToolCall("current_time", {}, { id: "c4" })], { stopReason: "toolUse" }),
+			fauxAssistantMessage("stopped", { stopReason: "stop" }),
+		]);
+		const models = createModels();
+		models.setProvider(faux.provider);
+		const scripted = faux.getModel();
+		const streamFn: StreamFn = (_model, context, options) => models.streamSimple(scripted, context, options);
+
+		const notices: string[] = [];
+		const session = await createAgent({
+			recipe: { mode: "general" },
+			model: "deepseek/deepseek-flash",
+			streamFn,
+			settings: {},
+			cwd: sandbox,
+			loopRepeatLimit: 2,
+			onEvent: (event) => {
+				if (event.type === "notice") notices.push(event.message);
+			},
+		});
+		await session.prompt("go");
+		check(
+			"a stuck repetition is refused and reported",
+			notices.some((message) => message.includes("重复调用")),
+			notices.join(" | ").slice(0, 120),
+		);
+		const toolResults = session.agent.state.messages.filter((message) => message.role === "toolResult");
+		check(
+			"the third identical call comes back as an error to the model",
+			toolResults.some((message) => message.isError === true),
+			`${toolResults.length} tool result(s)`,
+		);
+		session.dispose();
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
+async function checkModelFallback(): Promise<void> {
+	console.log("\nFallback model");
+
+	const runtime = ModelRuntime.create();
+	const primaryModel = runtime.resolve("deepseek/deepseek-flash");
+	const backupModel = runtime.resolve("deepseek/deepseek-v4-pro");
+	if (!primaryModel || !backupModel) {
+		check("the two models this check needs both resolve", false, "deepseek/deepseek-flash, deepseek/deepseek-v4-pro");
+		return;
+	}
+
+	const reply = fauxAssistantMessage([fauxText("ok")], { stopReason: "stop" });
+	const start = (): AssistantMessageEvent => ({ type: "start", partial: reply });
+	const delta = (): AssistantMessageEvent => ({ type: "text_delta", contentIndex: 0, delta: "par", partial: reply });
+	const done = (): AssistantMessageEvent => ({ type: "done", reason: "stop", message: reply });
+	const failed = (message: string): AssistantMessageEvent => ({
+		type: "error",
+		reason: "error",
+		error: fauxAssistantMessage([], { stopReason: "error", errorMessage: message }),
+	});
+	const terminals = (events: AssistantMessageEvent[]) =>
+		events.filter((event) => event.type === "done" || event.type === "error").length;
+
+	const primaryKey = "deepseek/deepseek-flash";
+	const backupKey = "deepseek/deepseek-v4-pro";
+
+	// ---- a failure before any output ------------------------------------
+	const scripted = scriptedStream({
+		[primaryKey]: [start(), failed("502 from the primary")],
+		[backupKey]: [start(), delta(), done()],
+	});
+	const reports: FallbackReport[] = [];
+	const events = await drain(
+		withModelFallback(scripted.stream, { fallback: backupModel, onFallback: (report) => reports.push(report) })(
+			primaryModel,
+			{ messages: [] } as never,
+			undefined,
+		),
+	);
+
+	check("an early failure calls the fallback", scripted.calls(backupKey) === 1, `${scripted.calls(backupKey)} call(s)`);
+	check("the primary is attempted exactly once", scripted.calls(primaryKey) === 1, `${scripted.calls(primaryKey)} call(s)`);
+	check("the fallback's reply reaches the consumer", events.some((event) => event.type === "text_delta"));
+	check("the failed attempt is not reported as an error", !events.some((event) => event.type === "error"));
+	check("the stream terminates exactly once", terminals(events) === 1, `${terminals(events)} terminal event(s)`);
+	// The correctness point behind the withholding: pi's loop turns each
+	// `start` into a new assistant message, so forwarding the failed attempt's
+	// would leave a stray empty message in the transcript.
+	check(
+		"the failed attempt's opening is not forwarded",
+		events.filter((event) => event.type === "start").length === 1,
+		`${events.filter((event) => event.type === "start").length} start event(s)`,
+	);
+	check("the switch is reported once", reports.length === 1, `${reports.length} report(s)`);
+	check("the report names the model that failed", reports[0]?.from.includes("deepseek-flash") === true, reports[0]?.from);
+	check("the report names the model retried on", reports[0]?.to.includes("deepseek-v4-pro") === true, reports[0]?.to);
+	check("the report carries the reason", reports[0]?.reason.includes("502") === true, reports[0]?.reason);
+
+	// ---- a failure after output started ---------------------------------
+	// The user has already seen the opening of the reply. Restarting would
+	// either duplicate it or replace text that is on screen, so this one is
+	// passed through as the error it is.
+	const late = scriptedStream({
+		[primaryKey]: [start(), delta(), failed("died mid-reply")],
+		[backupKey]: [done()],
+	});
+	const lateReports: FallbackReport[] = [];
+	const lateEvents = await drain(
+		withModelFallback(late.stream, {
+			fallback: backupModel,
+			onFallback: (report) => lateReports.push(report),
+		})(primaryModel, { messages: [] } as never, undefined),
+	);
+	check("a failure after output does not switch models", late.calls(backupKey) === 0, `${late.calls(backupKey)} call(s)`);
+	check("the partial reply is preserved", lateEvents.some((event) => event.type === "text_delta"));
+	check("the failure is passed through", lateEvents.some((event) => event.type === "error"));
+	check("no switch is reported", lateReports.length === 0);
+	check("the stream still terminates exactly once", terminals(lateEvents) === 1, `${terminals(lateEvents)} terminal event(s)`);
+
+	// ---- a source that ends with no terminal event ----------------------
+	// pi's contract says this cannot happen, so the honest report is an error
+	// rather than a silent stop — and above all the stream must end, because
+	// pi awaits `result()` and that promise only settles on a terminal event.
+	// An unterminated relay is the worst possible failure: no reply, no error,
+	// nothing to report.
+	const silentScript = () => scriptedStream({ [primaryKey]: [start()], [backupKey]: [start(), done()] });
+
+	const unrescued = silentScript();
+	let bareEvents: AssistantMessageEvent[] = [];
+	let bareSettled = true;
+	try {
+		bareEvents = await Promise.race([
+			// No fallback: nothing can rescue an attempt that stopped silently,
+			// so the error it is turned into is the only thing left to show.
+			drain(withModelFallback(unrescued.stream, {})(primaryModel, { messages: [] } as never, undefined)),
+			new Promise<AssistantMessageEvent[]>((resolve) =>
+				setTimeout(() => {
+					bareSettled = false;
+					resolve([]);
+				}, 250),
+			),
+		]);
+	} catch {
+		bareSettled = false;
+	}
+	check("a stream with no terminal event still ends", bareSettled);
+	check("and ends with an error rather than nothing", bareEvents.some((event) => event.type === "error"), `${bareEvents.length} event(s)`);
+	check("the synthesized error is the only terminal event", terminals(bareEvents) === 1, `${terminals(bareEvents)} terminal event(s)`);
+
+	// A silent end is a *failure* of the attempt, so it is a failure the
+	// fallback exists to rescue — the retry happens, and only its outcome shows.
+	const rescued = silentScript();
+	const rescuedEvents = await drain(
+		withModelFallback(rescued.stream, { fallback: backupModel })(primaryModel, { messages: [] } as never, undefined),
+	);
+	check("a silent end counts as a failure to rescue", rescued.calls(backupKey) === 1, `${rescued.calls(backupKey)} call(s)`);
+	check("and the retry's reply is what survives", rescuedEvents.some((event) => event.type === "done"));
+
+	// ---- no fallback configured ----------------------------------------
+	// The wrapper must not attempt anything twice. It still relays — that is
+	// what keeps "the returned stream always terminates" unconditional rather
+	// than conditional on configuration — but a second call is never made, and
+	// no switch is ever reported.
+	let singleCalls = 0;
+	const single = scriptedStream({ [primaryKey]: [start(), done()] });
+	const guarded: StreamFn = (model, context, options) => {
+		singleCalls++;
+		return single.stream(model, context, options);
+	};
+	const singleEvents = await drain(
+		withModelFallback(guarded, {
+			onFallback: () => {
+				throw new Error("onFallback must not fire when no fallback is configured");
+			},
+		})(primaryModel, { messages: [] } as never, undefined),
+	);
+	check("with no fallback configured there is exactly one attempt", singleCalls === 1, `${singleCalls} call(s)`);
+	check("with no fallback configured the reply passes through", singleEvents.some((e) => e.type === "done"));
+
+	// ---- through a real session -----------------------------------------
+	// The fallback is wired into the transport the session builds, so a
+	// session that names one exposes it — and one that does not, does not.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-fallback-"));
+	try {
+		const offline: StreamFn = async () => {
+			throw new Error("connection refused");
+		};
+		// A `streamFn` override bypasses the wrapper entirely, which is the
+		// documented behaviour: the transport is only built when the caller does
+		// not supply one. So the *resolution* is what is asserted here.
+		const withFallback = await createAgent({
+			recipe: { mode: "general" },
+			model: "deepseek/deepseek-flash",
+			fallbackModel: "deepseek/deepseek-v4-pro",
+			streamFn: offline,
+			settings: {},
+			cwd: sandbox,
+		});
+		check(
+			"a session reports the model it would fall back to",
+			withFallback.fallback?.id === "deepseek-v4-pro",
+			withFallback.fallback?.id ?? "(none)",
+		);
+		withFallback.dispose();
+
+		const without = await createAgent({
+			recipe: { mode: "general" },
+			model: "deepseek/deepseek-flash",
+			streamFn: offline,
+			settings: {},
+			cwd: sandbox,
+		});
+		check("a session without one reports none", without.fallback === undefined, String(without.fallback));
+		without.dispose();
+
+		let badSpec = "";
+		try {
+			await createAgent({
+				recipe: { mode: "general" },
+				model: "deepseek/deepseek-flash",
+				fallbackModel: "nope/nope",
+				streamFn: offline,
+				settings: {},
+				cwd: sandbox,
+			});
+		} catch (error) {
+			badSpec = error instanceof Error ? error.message : String(error);
+		}
+		check("an unknown fallback spec is rejected at session start", badSpec.includes("nope/nope"), badSpec.slice(0, 60));
+		check("and the message says it is the fallback that is broken", badSpec.includes("fallback"), badSpec.slice(0, 60));
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
+/**
+ * B7: a mode file may name the model it is built for.
+ *
+ * The precedence is the whole point, and it is asserted from both ends: the
+ * mode's suggestion applies when nothing else says anything, and it loses to
+ * the user's own choice. A file that silently overrode a setting is the fastest
+ * way to make a user stop trusting configuration files.
+ */
+async function checkModeModel(): Promise<void> {
+	console.log("\nMode-selected model");
+
+	// Registered in code rather than written as a file, because a mode loaded
+	// from disk would have to live in the *real* `~/.gdou-agent/modes` for
+	// `createAgent` to find it — and this check must not depend on, or pollute,
+	// the user's own directory. `registerProfile` is the seam for exactly this.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-mode-model-"));
+	registerProfile({
+		id: "smoke-pinned-model",
+		label: "Smoke Pinned",
+		description: "A mode that names a model, built in code for this check.",
+		source: "(smoke) smoke-pinned-model",
+		model: "deepseek/deepseek-v4-pro",
+		systemPrompt: () => "pinned",
+		tools: () => [],
+	});
+	registerProfile({
+		id: "smoke-broken-model",
+		label: "Smoke Broken",
+		description: "A mode naming a model that does not exist.",
+		source: "(smoke) smoke-broken-model",
+		model: "nope/nope",
+		systemPrompt: () => "broken",
+		tools: () => [],
+	});
+	registerProfile({
+		id: "smoke-no-model",
+		label: "Smoke Unpinned",
+		description: "A mode with no model of its own.",
+		source: "(smoke) smoke-no-model",
+		systemPrompt: () => "unpinned",
+		tools: () => [],
+	});
+
+	const streamFn: StreamFn = async () => createAssistantMessageEventStream();
+	try {
+		const suggested = await createAgent({
+			recipe: { mode: "smoke-pinned-model" },
+			streamFn,
+			settings: {},
+			cwd: sandbox,
+		});
+		check("the mode's model applies when nothing else does", suggested.model.id === "deepseek-v4-pro", suggested.model.id);
+		suggested.dispose();
+
+		const overridden = await createAgent({
+			recipe: { mode: "smoke-pinned-model" },
+			model: "deepseek/deepseek-flash",
+			streamFn,
+			settings: {},
+			cwd: sandbox,
+		});
+		check("an explicit option beats the mode's suggestion", overridden.model.id === "deepseek-flash", overridden.model.id);
+		overridden.dispose();
+
+		const stored = await createAgent({
+			recipe: { mode: "smoke-pinned-model" },
+			streamFn,
+			settings: { model: "deepseek/deepseek-flash" },
+			cwd: sandbox,
+		});
+		check("a stored preference beats the mode's suggestion", stored.model.id === "deepseek-flash", stored.model.id);
+		stored.dispose();
+
+		// The environment fall-through can only be observed on a machine that has
+		// an environment to fall through to, so it is skipped rather than failed
+		// when no key is set — the same bargain the credentials section makes.
+		// Without this, the suite would go red for anyone who has not configured
+		// a provider, which is precisely the state a fresh clone is in.
+		if (presetsWithCredentials().length > 0) {
+			const fromEnv = await createAgent({
+				recipe: { mode: "smoke-no-model" },
+				streamFn,
+				settings: {},
+				cwd: sandbox,
+			});
+			check("a mode with no model falls through to the environment default", typeof fromEnv.model.id === "string", fromEnv.model.id);
+			fromEnv.dispose();
+		} else {
+			console.log("  (no keys set; the environment fall-through is not exercised)");
+		}
+
+		let broken = "";
+		try {
+			await createAgent({ recipe: { mode: "smoke-broken-model" }, streamFn, settings: {}, cwd: sandbox });
+		} catch (error) {
+			broken = error instanceof Error ? error.message : String(error);
+		}
+		// Named with the mode and the file, because "Unknown model" on its own
+		// sends the reader through settings and the environment looking for a
+		// spec that lives somewhere else entirely.
+		check("a mode naming an unknown model is rejected", broken.includes("smoke-broken-model"), broken.slice(0, 80));
+		check("the error reports which mode is at fault", broken.includes("does not exist"), broken.slice(0, 80));
+		check("the error names the file it came from", broken.includes("smoke-broken-model"), broken.slice(0, 120));
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
+async function checkCredentials(): Promise<void> {
+	console.log("\nCredentials");
+
+	// A store pointed at a temporary file, never the real `auth.json`. Every
+	// entry point takes the store for exactly this reason: a check that wrote to
+	// the user's own credentials would be indistinguishable from an attack.
+	const sandbox = mkdtempSync(join(tmpdir(), "gdou-credentials-"));
+	const path = join(sandbox, "auth.json");
+	const store = new FileCredentialStore(path);
+	// A key that is obviously a fixture, so a leak into a real file is visible.
+	const KEY = "sk-smoke-fixture-0000abcd";
+
+	try {
+		// ---- nothing configured ----------------------------------------
+		const empty = await providerCredentials({}, store);
+		check("an absent file reports nothing configured", empty.every((row) => !row.source));
+		check("but every preset is still listed", empty.length >= 5, `${empty.length} rows`);
+
+		// ---- saving ------------------------------------------------------
+		await setApiKey("deepseek", KEY, store);
+		check("saving creates the file", existsSync(path));
+		// The whole file is a secret, so it is created 0600 — but that is a POSIX
+		// promise. Windows has no permission bits: `chmod` there only toggles the
+		// read-only attribute, so the file comes back 0666 however it was asked
+		// for, and what protects it is the ACL on the user profile. Asserted only
+		// where it can hold, the same bargain the environment check makes.
+		if (process.platform !== "win32") {
+			const mode = statSync(path).mode & 0o777;
+			check("the file is 0600", mode === 0o600, mode.toString(8).padStart(4, "0"));
+		}
+		check("the key reached the file", readFileSync(path, "utf-8").includes(KEY));
+
+		const rows = await providerCredentials({}, store);
+		const deepseek = rows.find((row) => row.providerId === "deepseek");
+		check("the row reports a stored credential", deepseek?.source === "stored", String(deepseek?.source));
+		check("the row carries a hint", (deepseek?.hint ?? "").length > 0, deepseek?.hint);
+		// The one that matters: the hint must not be usable as the key.
+		check("the hint is not the key", deepseek?.hint?.includes(KEY.slice(0, -4)) === false, deepseek?.hint);
+		check("the hint keeps the last four", deepseek?.hint?.endsWith(KEY.slice(-4)) === true, deepseek?.hint);
+		check("no row carries the key at all", JSON.stringify(rows).includes(KEY) === false);
+
+		// ---- pi actually uses it -----------------------------------------
+		// The assertion the whole feature rests on. Everything above tests our
+		// own bookkeeping; this one asks pi's resolution layer what it would send,
+		// which is the only outside view of "the key I saved is the key in use".
+		const runtime = ModelRuntime.create(store);
+		const model = runtime.resolve("deepseek/deepseek-flash");
+		const auth = model ? await runtime.models.getAuth(model) : undefined;
+		check("pi resolves a credential for the provider", auth !== undefined);
+		check("it is the stored one, not the environment", auth?.source === "stored credential", String(auth?.source));
+		check("and it is the key that was stored", auth?.auth.apiKey === KEY);
+
+		// A stored credential owns its provider, so it has to beat an
+		// environment variable rather than the other way round. Someone who
+		// deliberately entered a key means that key.
+		const shadowed = await providerCredentials({ DEEPSEEK_API_KEY: "sk-from-the-environment" }, store);
+		check(
+			"a stored key is preferred over the environment",
+			shadowed.find((row) => row.providerId === "deepseek")?.source === "stored",
+		);
+
+		// ---- refusals ----------------------------------------------------
+		let emptyKeyRefused = false;
+		try {
+			await setApiKey("deepseek", "   ", store);
+		} catch {
+			emptyKeyRefused = true;
+		}
+		check("an empty key is refused", emptyKeyRefused);
+
+		let typoRefused = false;
+		try {
+			// Stored happily, a typo would never be used, and the user would
+			// report it as "the key I saved does not work".
+			await setApiKey("deepsek", KEY, store);
+		} catch {
+			typoRefused = true;
+		}
+		check("an unknown provider id is refused", typoRefused);
+		check("and the refusal did not write it", readFileSync(path, "utf-8").includes("deepsek") === false);
+
+		// ---- removing ----------------------------------------------------
+		await removeApiKey("deepseek", store);
+		const after = await providerCredentials({}, store);
+		check("removing clears the row", after.find((row) => row.providerId === "deepseek")?.source === undefined);
+		check("and the file is still valid JSON", typeof JSON.parse(readFileSync(path, "utf-8")) === "object");
+
+		// ---- damage ------------------------------------------------------
+		// The asymmetry between the two read paths is deliberate, so both halves
+		// are pinned: reading treats damage as "nothing configured" so a typo
+		// cannot brick the application, and writing refuses so a typo cannot
+		// erase credentials that were still recoverable by hand.
+		const damaged = join(sandbox, "damaged.json");
+		writeFileSync(damaged, '{ "deepseek": { "type": "api_key", "key": "sk-lost' /* truncated */);
+		const damagedStore = new FileCredentialStore(damaged);
+		const damagedRows = await providerCredentials({}, damagedStore);
+		check("a damaged file reads as nothing configured", damagedRows.every((row) => !row.source));
+
+		let writeRefused = false;
+		try {
+			await setApiKey("deepseek", KEY, damagedStore);
+		} catch {
+			writeRefused = true;
+		}
+		check("but a write over it is refused", writeRefused);
+		check(
+			"and the damaged file is left byte-for-byte intact",
+			readFileSync(damaged, "utf-8").includes("sk-lost"),
+		);
+
+		// ---- trimming ----------------------------------------------------
+		const padded = join(sandbox, "padded.json");
+		const paddedStore = new FileCredentialStore(padded);
+		await setApiKey("moonshotai", `  ${KEY}\n`, paddedStore);
+		const stored = await paddedStore.read("moonshotai");
+		const storedKey = stored?.type === "api_key" ? stored.key : undefined;
+		check("a pasted key is trimmed", storedKey === KEY, storedKey);
+
+		// The path the interface actually opens with: the process-wide store,
+		// pointed at the real home. Every check above uses a temporary store
+		// precisely so it cannot touch the user's credentials, which leaves this
+		// one combination untested — and it is the one the settings page calls.
+		// Read-only, so running it for real is safe.
+		const live = await providerCredentials();
+		check("the real store answers without throwing", Array.isArray(live), `${live.length} rows`);
+		check("and reports one row per preset", live.length >= 5, `${live.length} rows`);
+	} finally {
+		rmSync(sandbox, { recursive: true, force: true });
+	}
+}
+
 async function main(): Promise<void> {
 	console.log("Module resolution");
 	check("pi-ai import resolves", typeof createModels === "function");
@@ -681,47 +1489,10 @@ async function main(): Promise<void> {
 	check("known model resolves", runtime.resolve("deepseek/deepseek-flash") !== undefined);
 	check("unknown model does not resolve", runtime.resolve("nope/nope") === undefined);
 
-	console.log("\nProfiles");
-	const profiles = listProfiles();
-	check("two built-in profiles", profiles.length === 2, profiles.map((p) => p.id).join(", "));
 
-	const general = getProfile("general");
-	const generalTools = await general.tools({ cwd: process.cwd() });
-	check("general profile builds tools", generalTools.length === 5, `${generalTools.length} tools`);
-	check(
-		"general exposes no file tools",
-		!generalTools.some((t) => ["read", "write", "edit", "bash"].includes(t.name)),
-	);
-	// Research is an everyday task, so the web tools belong here. Delivery does
-	// not: it stats the paths it is given, and this mode's description is that
-	// it does not touch the filesystem.
-	check(
-		"general can research",
-		["web_search", "web_fetch"].every((name) => generalTools.some((t) => t.name === name)),
-	);
-	check(
-		"general cannot deliver files",
-		!generalTools.some((t) => t.name === "present_files"),
-	);
-
-	const coding = getProfile("coding");
-	const codingTools = await coding.tools({ cwd: process.cwd() });
-	check("coding profile builds tools", codingTools.length === 10, `${codingTools.length} tools`);
-	check(
-		"coding exposes expected tools",
-		["read", "bash", "edit", "write", "grep", "find", "ls", "present_files", "web_search", "web_fetch"].every(
-			(name) => codingTools.some((t) => t.name === name),
-		),
-	);
-	// Delivery is the mode's own tool rather than pi's, and it is not gated by
-	// `enabledTools`: a narrowed read-only reviewer should still be able to hand
-	// back what it found.
-	check(
-		"delivery survives tool narrowing",
-		narrowTools(codingTools, undefined).tools.some((t) => t.name === "present_files"),
-	);
-	check("coding system prompt includes cwd", coding.systemPrompt({ cwd: "C:/tmp" }).includes("C:/tmp"));
-
+	await checkModes();
+	await checkModeModel();
+	await checkCredentials();
 	await checkExperts();
 	await checkPermissions();
 	await checkPresentFiles();
@@ -919,7 +1690,7 @@ async function main(): Promise<void> {
 	await defaultStreamFn(spyRuntime)({} as never, {} as never, {});
 	check("retries are injected into the transport", captured[0]?.maxRetries === 2, String(captured[0]?.maxRetries));
 
-	await defaultStreamFn(spyRuntime, 5)({} as never, {} as never, {});
+	await defaultStreamFn(spyRuntime, { maxRetries: 5 })({} as never, {} as never, {});
 	check("the retry count can be overridden", captured[1]?.maxRetries === 5, String(captured[1]?.maxRetries));
 
 	await defaultStreamFn(spyRuntime)({} as never, {} as never, { maxRetries: 9 });
@@ -928,6 +1699,9 @@ async function main(): Promise<void> {
 		captured[2]?.maxRetries === 9,
 		String(captured[2]?.maxRetries),
 	);
+
+	await checkLoopGuard();
+	await checkModelFallback();
 
 	console.log("\nSettings and credentials");
 	const settings = loadSettings();

@@ -24,6 +24,10 @@ vendor/bin/
 # kept screenshots live in `docs/screenshots/` and are committed.
 .shots/
 
+# Local agent workspace data (session-to-session notes). Not part of the
+# product; committing it would only add churn to every diff.
+.workbuddy/
+
 # Editor and OS noise. Not harmful, but it clutters every diff and the entries
 # are free.
 .vscode/

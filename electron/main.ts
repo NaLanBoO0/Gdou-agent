@@ -21,6 +21,7 @@ import { app, BrowserWindow, dialog, ipcMain } from "electron";
 import type { AgentSession } from "../src/kernel/agent.ts";
 import { createAgent } from "../src/kernel/agent.ts";
 import { loadSettings, saveSettings } from "../src/config/settings.ts";
+import { authPath, providerCredentials, removeApiKey, setApiKey } from "../src/kernel/credentials.ts";
 import { scriptedRun, scriptedRunEnabled } from "../src/kernel/demo.ts";
 import { replay, type AgentEvent } from "../src/kernel/events.ts";
 import { narrowTools } from "../src/kernel/recipe.ts";
@@ -70,6 +71,27 @@ interface SessionInfo {
 	/** The expert layered on top of the mode, or null when there is none. */
 	expert: { id: string; label: string; description: string } | null;
 	model: { provider: string; id: string; name: string };
+	/**
+	 * Whether pi can resolve auth for `model` right now.
+	 *
+	 * Reported so the interface can say "this one is callable" *before* a request
+	 * fails, rather than after. It is asked of the resolution layer instead of
+	 * inferred from the credential file, because the file is not the whole story:
+	 * a key stored for a different provider, an expired OAuth token, and a
+	 * provider that needs something other than a key all look configured on disk
+	 * and fail the moment they are used.
+	 */
+	modelReady: boolean;
+	/**
+	 * The model a failed request would be retried on, or null when none is set.
+	 *
+	 * Disclosed rather than kept internal: a reply that quietly came from a
+	 * different model than the one on the status line is the sort of thing a
+	 * user should have been told about *before* it happened. The notice the
+	 * kernel raises at the moment of the switch says it did happen; this says it
+	 * could.
+	 */
+	fallback: { provider: string; id: string } | null;
 	cwd: string;
 	toolCount: number;
 	/**
@@ -232,11 +254,17 @@ async function startSession(profileId: string, options: StartOptions = {}): Prom
 	// other than the one it was written with.
 	const expertId = options.expert === null ? undefined : (options.expert ?? loadSettings().expert);
 
-	const profile = getProfile(profileId);
 	const stored = options.sessionId ? loadSession(options.sessionId) : undefined;
 	const usable = stored && matchesRecipe(stored, profileId, expertId) ? stored : undefined;
 
 	const cwd = options.cwd ?? usable?.cwd ?? resolveCwd();
+
+	// Resolved after `cwd`, because a mode may come from a project-level file
+	// (`<cwd>/.gdou-agent/modes/`) — the working directory decides which modes
+	// exist, exactly as it does for experts. An unknown id therefore fails here,
+	// which is the intended outcome for a stored recipe whose file was removed.
+	const profile = getProfile(profileId, cwd);
+
 	activeSessionId = usable?.id ?? createSessionId();
 	activeProfileId = profileId;
 	activeExpertId = expertId;
@@ -281,6 +309,14 @@ async function startSession(profileId: string, options: StartOptions = {}): Prom
 		// Prompt-cache affinity: providers that route caches key on this, so the
 		// requests of one conversation keep landing on the same cache.
 		sessionId: activeSessionId,
+		// The stored preferences — model, thinking level, permission tier,
+		// fallback, loop guard — all live here. Omitting this is what once made
+		// `agent:setModel` appear to do nothing: it saved the choice to disk and
+		// then rebuilt the session without handing the settings back, so the
+		// kernel resolved the model from the mode default instead of the value
+		// the user just picked. Every preference, not just the model, depends on
+		// this line.
+		settings: loadSettings(),
 	});
 
 	session = started;
@@ -296,6 +332,17 @@ async function startSession(profileId: string, options: StartOptions = {}): Prom
 		}
 	});
 
+	// Asked of pi, not guessed from `auth.json`. `getAuth` is the same resolution
+	// a request performs, so this answers "would a call to this model work"
+	// instead of "is there a key lying around". A provider whose resolution throws
+	// is not usable either, and a throw answers the same question with no.
+	let modelReady = false;
+	try {
+		modelReady = (await started.runtime.models.getAuth(started.model)) !== undefined;
+	} catch {
+		modelReady = false;
+	}
+
 	const result: SessionStart = {
 		info: {
 			sessionId: activeSessionId,
@@ -305,6 +352,8 @@ async function startSession(profileId: string, options: StartOptions = {}): Prom
 				? { id: started.expert.id, label: started.expert.label, description: started.expert.description }
 				: null,
 			model: { provider: started.model.provider, id: started.model.id, name: started.model.name },
+			modelReady,
+			fallback: started.fallback ? { provider: started.fallback.provider, id: started.fallback.id } : null,
 			cwd,
 			toolCount: started.agent.state.tools.length,
 			tools: started.agent.state.tools.map((tool) => tool.name),
@@ -426,7 +475,7 @@ async function probeKernel(): Promise<KernelProbe> {
 			bundled: IS_BUNDLED,
 			packaged: app.isPackaged,
 		},
-		profiles: listProfiles().map((profile) => ({
+		profiles: listProfiles(resolveCwd()).map((profile) => ({
 			id: profile.id,
 			label: profile.label,
 			description: profile.description,
@@ -573,11 +622,21 @@ void app.whenReady().then(() => {
 		targetWindow()?.close();
 	});
 
+	/**
+	 * Modes available for the current working directory.
+	 *
+	 * Resolved against the working directory rather than the process directory,
+	 * because project-level modes live beside the code they describe — the same
+	 * reason `agent:experts` does. `source` is passed through so the interface
+	 * can say which file a mode came from; without it, a mode that is not
+	 * behaving as written is indistinguishable from one that was not loaded.
+	 */
 	ipcMain.handle("agent:profiles", () =>
-		listProfiles().map((profile) => ({
+		listProfiles(resolveCwd()).map((profile) => ({
 			id: profile.id,
 			label: profile.label,
 			description: profile.description,
+			source: profile.source ?? null,
 		})),
 	);
 
@@ -607,6 +666,82 @@ void app.whenReady().then(() => {
 			// because "where do I put my own expert" is otherwise unanswerable.
 			paths: [`${join(projectExpertsDir(cwd), "<id>.md")}`, `${join(expertsDir(), "<id>.md")}`],
 		};
+	});
+
+	/**
+	 * Credential state per provider, for the settings view.
+	 *
+	 * The key itself never crosses this boundary. Each row carries a masked hint
+	 * and where the credential came from, which answers "is this configured, and
+	 * which key is it" without the value existing anywhere the renderer can read
+	 * it. A renderer that could read keys could leak one into a log, a crash
+	 * report, or a screenshot; one that can only read hints cannot.
+	 *
+	 * The file path travels with the rows so the page can say where keys live.
+	 * That is not decoration: a user who cannot find the file has no way to
+	 * remove a key by hand when the interface will not start.
+	 */
+	const credentialSnapshot = async () => ({ providers: await providerCredentials(), authPath: authPath() });
+
+	ipcMain.handle("credentials:list", credentialSnapshot);
+
+	/** Save a key, and return the fresh rows so the view cannot drift from disk. */
+	ipcMain.handle("credentials:set", async (_event, providerId: string, key: string) => {
+		await setApiKey(providerId, key);
+		return credentialSnapshot();
+	});
+
+	/**
+	 * Remove a stored key.
+	 *
+	 * Only touches the file. A key that arrived through the environment stays
+	 * usable, and its row keeps saying so — deleting something we do not own
+	 * would be a lie about what happened.
+	 */
+	ipcMain.handle("credentials:remove", async (_event, providerId: string) => {
+		await removeApiKey(providerId);
+		return credentialSnapshot();
+	});
+
+	/** Models of one provider, for the picker. */
+	ipcMain.handle("models:list", (_event, providerId: string) =>
+		ModelRuntime.create()
+			.modelsFor(providerId)
+			.map((model) => ({
+				id: model.id,
+				name: model.name,
+				contextWindow: model.contextWindow,
+				reasoning: model.reasoning,
+			})),
+	);
+
+	/**
+	 * Choose the model a session runs on.
+	 *
+	 * Written to settings rather than held in this process so the choice survives
+	 * a restart, and adopted by rebuilding the session — the model is resolved
+	 * when a session is built, so anything else would leave the interface showing
+	 * a model the running agent is not using. An empty spec clears the choice and
+	 * goes back to picking a default.
+	 */
+	ipcMain.handle("agent:setModel", async (_event, spec: string) => {
+		if (!activeProfileId) throw new Error("还没有会话。先选一个模式。");
+		const next = spec.trim();
+		if (next.length > 0 && !ModelRuntime.create().resolve(next)) {
+			// Refused rather than stored. A spec that resolves to nothing fails at
+			// the next session start, several clicks away from the one that caused
+			// it, and reads as "the app broke".
+			throw new Error(`Unknown model: ${next}`);
+		}
+		const settings = loadSettings();
+		if (next.length > 0) settings.model = next;
+		else delete settings.model;
+		saveSettings(settings);
+		return startSession(activeProfileId, {
+			cwd: resolveCwd(),
+			sessionId: activeSessionId,
+			expert: activeExpertId ?? null,
+		});
 	});
 
 	/**

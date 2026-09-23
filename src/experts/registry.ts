@@ -17,16 +17,13 @@
  * and easy to blame on the model.
  */
 
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, join } from "node:path";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { THINKING_LEVELS } from "../config/settings.ts";
+import { loadDefinitionDir } from "../definitions/directory.ts";
+import { parseFrontmatter } from "../definitions/frontmatter.ts";
 import { expertsDir, projectExpertsDir } from "../paths.ts";
 import { BUILTIN_EXPERTS } from "./builtin.ts";
-import { parseFrontmatter } from "./frontmatter.ts";
 import type { Expert } from "./types.ts";
-
-const MARKDOWN = ".md";
 
 /** Turn one markdown document into an expert, or explain why it cannot be one. */
 function toExpert(id: string, source: string, raw: string): Expert {
@@ -89,32 +86,13 @@ function loadBuiltins(): Expert[] {
 /**
  * Read every `*.md` in a directory.
  *
- * A directory that does not exist is normal — most users have no project-level
- * experts — so it yields nothing rather than erroring. A file that exists but
- * does not parse is collected as an error instead of being skipped: a silently
- * ignored expert is indistinguishable from a typo in the id.
+ * The directory-missing and file-broken policies live in
+ * `loadDefinitionDir`, shared with the mode loader so the two cannot disagree
+ * about what "a directory of definitions" means.
  */
 function loadDir(dir: string): { experts: Expert[]; errors: string[] } {
-	let names: string[];
-	try {
-		names = readdirSync(dir);
-	} catch {
-		return { experts: [], errors: [] };
-	}
-
-	const experts: Expert[] = [];
-	const errors: string[] = [];
-	for (const name of names.sort()) {
-		if (extname(name).toLowerCase() !== MARKDOWN) continue;
-		const path = join(dir, name);
-		try {
-			if (!statSync(path).isFile()) continue;
-			experts.push(toExpert(basename(name, extname(name)), path, readFileSync(path, "utf-8")));
-		} catch (error) {
-			errors.push(error instanceof Error ? error.message : String(error));
-		}
-	}
-	return { experts, errors };
+	const { items, errors } = loadDefinitionDir(dir, toExpert);
+	return { experts: items, errors };
 }
 
 export interface ExpertCatalog {

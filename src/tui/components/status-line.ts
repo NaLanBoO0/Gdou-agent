@@ -23,6 +23,8 @@ export class StatusLine implements Component {
 	private profileLabel = "";
 	private expertLabel = "";
 	private modelSpec = "";
+	/** Model to retry on, rendered as `⇄ spec` after the model. Empty when none. */
+	private fallbackSpec = "";
 	private cwd = "";
 	private working = false;
 	private spinnerFrame = 0;
@@ -56,6 +58,20 @@ export class StatusLine implements Component {
 
 	setModel(spec: string): void {
 		this.modelSpec = spec;
+		this.tui.requestRender();
+	}
+
+	/**
+	 * Show the model a failed request would be retried on, or clear with "".
+	 *
+	 * Rendered immediately after the model rather than as a field of its own:
+	 * the two are one fact — "who answers" — and a separator between them would
+	 * read as two unrelated models being reported. Only shown when one is
+	 * configured, on the same principle as the context indicator: a field that
+	 * is always present becomes furniture and stops being read.
+	 */
+	setFallback(spec: string): void {
+		this.fallbackSpec = spec;
 		this.tui.requestRender();
 	}
 
@@ -128,7 +144,11 @@ export class StatusLine implements Component {
 			return [this.theme.accent(truncateToWidth(this.hint, width, "…"))];
 		}
 
-		const left = [this.profileLabel, this.expertLabel, this.modelSpec, this.cwd]
+		// The fallback rides along with the model rather than taking a slot of
+		// its own, so the separator count stays the same whether one is set.
+		const model = this.fallbackSpec ? `${this.modelSpec} ⇄${this.fallbackSpec}` : this.modelSpec;
+
+		const left = [this.profileLabel, this.expertLabel, model, this.cwd]
 			.filter((part) => part.length > 0)
 			.join(SEPARATOR);
 

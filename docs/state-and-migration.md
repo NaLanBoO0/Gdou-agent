@@ -10,21 +10,31 @@
 | 路径 | 内容 | 该不该带走 |
 | --- | --- | --- |
 | `~/.gdou-agent/sessions/*.json` | **对话记录**，一段对话一个文件 | ✅ 要 |
-| `~/.gdou-agent/settings.json` | 默认模式 / 专家 / 模型 / 工作目录 / 权限档位 | ✅ 要 |
+| `~/.gdou-agent/settings.json` | 默认模式 / 专家 / 模型 / 备用模型 / 工作目录 / 权限档位 / 重复调用上限 | ✅ 要 |
 | `~/.gdou-agent/notes.json` | `save_note` 工具存的事实 | ✅ 要 |
 | `~/.gdou-agent/experts/` | 你自己写的专家（markdown） | ✅ 要 |
-| `~/.pi/agent/auth.json` | **API key**（pi 自己的位置，不是我们的） | ⚠️ 见下 |
+| `~/.gdou-agent/modes/` | 你自己写的模式（markdown） | ✅ 要 |
+| `~/.gdou-agent/auth.json` | **API key**（明文；POSIX 下 0600） | ✅ 要 —— 不带走就得在新机器上重新填一次 |
 | `~/.gdou-agent/agent/bin/` | 托管下载的 `rg` / `fd` 二进制（约 9 MB） | ❌ 不要，会自动重下 |
 
 `~/.gdou-agent` 可以用环境变量 `GDOU_AGENT_HOME` 改到别处。
 
 ### 两个容易踩的点
 
-**凭据不在我们的目录里。** API key 存在 `~/.pi/agent/auth.json`，因为那个位置由 pi
-决定，我们只是没覆盖它。这意味着**这个文件和 pi 自己共用**——如果你同时用 pi，
-删掉它会同时影响两边。
+**凭据现在就在我们的目录里，这是刻意改的。** API key 存在 `~/.gdou-agent/auth.json`。
+第一版放在 pi 的 `~/.pi/agent/auth.json`（也就是 `getAgentDir()` 的默认值），但那个函数
+是从 `homedir()` 推导的、**无视 `GDOU_AGENT_HOME`** —— 于是 `check:gui`（跑在一个临时 home 上，
+存在的意义就是不碰真实状态）会去写你**真实的**凭据文件。**自检去改被检查的东西，比没有自检更糟。**
+文件的**形状**仍然是 pi 的（`Record<providerId, Credential>`，由 `auth/resolve.ts` 读取），
+只有路径换成我们自己的。
 
 **`auth.json` 是明文。** 权限门禁止工具读写它，但它本身没有加密。
+POSIX 上以 0600 创建；**Windows 上没有权限位**，`chmod` 只切只读位，回读永远是 0666 ——
+那里保护它的是用户目录的 ACL。这一点写在代码注释里，也是一条按平台跳过的断言，
+而不是一句做不到的承诺。
+
+键存进去之后**优先于环境变量**（pi 的规则：存储的凭据*拥有*那个 provider）。
+所以「我明明设了环境变量却没生效」的原因通常是**界面里存过一把** —— 去「设置」删掉它。
 要带走就用安全的方式传，别丢进网盘或者聊天窗口。
 
 ## 迁移到另一台机器
@@ -62,10 +72,37 @@ cp -r ~/.gdou-agent/sessions /path/to/transfer/
 但 key 在 `auth.json` 里——不带走 key 的话，新机器上启动会报
 「No model available」，并列出可用的环境变量。
 
+**模式文件里也能写模型，而那是迁移时的一个坑。** 模式 frontmatter 的
+`model:` 是一个**建议**（优先级最低）：
+
+- spec **不存在**：会话启动直接报
+  `Mode "x" names a model that does not exist: provider/model`，并点名文件。
+  这是硬错误，因为一个模型名字写错的文件本来就该被发现。
+- spec **存在但新机器上没配 key**：**不会报错，也不会回落**。
+  `resolveDefault` 只查模型目录，不查凭据，所以模式点的那个模型会被用上，
+  失败推迟到**第一次请求**才以凭据错误的形式出现。
+  实测过：环境里一个 key 都没有时 `deepseek/deepseek-flash` 照样解析成功。
+  反过来说，「模式压不过用户的选择」只体现在**优先级**上，不体现在「没 key 就换一个」上——
+  这两件事容易混为一谈。
+
+所以带模式文件过去时，要么把 `model:` 那行删掉，要么确认新机器上有对应的 provider。
+
+**备用模型同理，而且它就是为「某个 provider 在今天不好用」准备的。**
+`fallbackModel` 写一个**不同的 provider** 会更值：同一个 provider 的两个模型
+在它整体过载时会一起挂。注意它只在**产出任何内容之前**的失败上生效——
+回复已经开始流式输出之后的失败原样报出来，不会重写。
+
 **专家的项目级覆盖不会走。** 三级加载是
 `<工作目录>/.gdou-agent/experts/` > `~/.gdou-agent/experts/` > 内置。
 只拷 `~/.gdou-agent` 带走的是用户级和内置的；项目级那些在各自的仓库里，
 跟着代码走。
+
+**模式同理**，而且这里更容易踩：模式决定会话**能做什么**。
+如果一段对话用的是项目级模式 `<工作目录>/.gdou-agent/modes/reviewer.md`，
+只带走 `~/.gdou-agent` 之后，新机器上恢复这段对话会报
+`Unknown mode: reviewer` 并列出所有已知模式——
+这是**故意的**：用一个工具集不同的模式去恢复，等于让 agent 重演一段它从没做过的对话。
+把缺失的那个 `.md` 一起带过去就正常了。
 
 ## 文件格式
 
@@ -94,3 +131,12 @@ cp -r ~/.gdou-agent/sessions /path/to/transfer/
 两者指的是同一个东西（模式 id）。这是改名词汇时漏掉的一处——
 存储格式没跟着改，因为改名要带回落读取，当时只处理了 `settings.json`。
 不影响使用，但看文件时会觉得别扭。
+
+**同一处不一致还有更大的范围**：代码里到处是 `profile`——
+`AgentProfile`、`src/profiles/`、`--profile`、`--list-profiles`、IPC 的 `agent:profiles`、
+界面里的 `session.profile`。而界面文案、`settings.mode`、`SessionRecipe.mode`
+和「模式」这个说法，指的都是它。
+
+**没有顺手改，是有意的**：模式层刚做完改造（`FEATURES.md` 2.31），
+再叠一次跨二十多个文件的重命名会让这次的 diff 无法审查。
+存储字段 `profile` 尤其要单独做——它需要带回落的读取路径。

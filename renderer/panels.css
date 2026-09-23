@@ -576,3 +576,112 @@
 .tool--delivery .tool-body {
 	display: none;
 }
+
+/* ------------------------------------------------- settings: credentials */
+
+.cred-list {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-bottom: 14px;
+}
+
+.cred-row,
+.cred-card {
+	padding: 15px 17px;
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: 14px;
+}
+
+.cred-card {
+	margin-bottom: 12px;
+}
+
+.cred-card h2 {
+	margin: 0 0 10px;
+	color: var(--text);
+	font-size: var(--text-title);
+	font-weight: 500;
+}
+
+.cred-head {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	margin-bottom: 2px;
+}
+
+.cred-head b {
+	color: var(--text);
+	font-size: var(--text-lg);
+	font-weight: 500;
+}
+
+.cred-head .status-pill {
+	padding: 3px 8px;
+	color: var(--ok-text);
+	background: var(--ok-soft);
+	border-radius: 5px;
+	font-size: var(--text-sm);
+}
+
+/* Not configured is not an error — nothing is wrong, it simply has not been set
+   up. Red would say the provider is broken, which is a different claim. */
+.cred-head .status-pill--idle {
+	color: var(--text-faint);
+	background: var(--surface-soft);
+}
+
+.cred-note {
+	margin: 4px 0 0;
+	color: var(--text-muted);
+	font-size: var(--text-md);
+	line-height: 1.7;
+}
+
+.cred-note code {
+	padding: 1px 5px;
+	font-family: var(--mono);
+	font-size: var(--text-base);
+	background: var(--surface-sunken);
+	border-radius: 4px;
+	word-break: break-all;
+}
+
+.cred-form {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-top: 10px;
+}
+
+.cred-input {
+	flex: 1 1 260px;
+	min-width: 0;
+	padding: 7px 9px;
+	color: var(--text);
+	font-family: var(--mono);
+	font-size: var(--text-md);
+	background: var(--surface);
+	border: 1px solid var(--border-strong);
+	border-radius: var(--radius-sm);
+}
+
+.cred-input:focus {
+	outline: none;
+	background: var(--surface-raised);
+	border-color: var(--accent);
+}
+
+/* The file a mode came from, under its description on the diagnostics page.
+   Monospace because it is a path, and a path broken mid-word by the proportional
+   face is unreadable at exactly the moment someone is trying to copy it. */
+.profiles .source {
+	margin-top: 2px;
+	color: var(--text-faint);
+	font-family: var(--mono);
+	font-size: var(--text-sm);
+	word-break: break-all;
+}

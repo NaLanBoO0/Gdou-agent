@@ -131,6 +131,9 @@ export class TuiApp {
 		this.status.setProfile(this.session.profile.label);
 		this.status.setExpert(this.session.expert?.label ?? "");
 		this.status.setModel(`${this.session.model.provider}/${this.session.model.id}`);
+		this.status.setFallback(
+			this.session.fallback ? `${this.session.fallback.provider}/${this.session.fallback.id}` : "",
+		);
 		this.status.setCwd(this.session.cwd);
 
 		if (banner) this.pushBanner();

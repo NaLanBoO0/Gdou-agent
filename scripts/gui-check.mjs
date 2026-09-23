@@ -117,6 +117,18 @@ function connect(page) {
 		socket.addEventListener("error", () => rejectReady(new Error("could not attach to the page")));
 	});
 
+	// A renderer that dies takes its half of the conversation with it. Without
+	// this, a request already in flight waits forever, and the check hangs on the
+	// step that killed it instead of naming it — which is how "the settings page
+	// froze the suite" was first observed: an unsettled top-level await, with no
+	// line number that meant anything.
+	socket.addEventListener("close", () => {
+		for (const [id, entry] of pending) {
+			pending.delete(id);
+			entry.reject(new Error("the page went away before answering"));
+		}
+	});
+
 	return {
 		async evaluate(expression) {
 			await ready;
@@ -150,6 +162,15 @@ async function waitFor(client, expression, done, description) {
 	throw new Error(`timed out waiting for ${description} (last value: ${JSON.stringify(last)})`);
 }
 
+/**
+ * Output of the most recently launched application instance.
+ *
+ * Kept at module scope so the outermost handler can attach it to any failure.
+ * The main process's stderr is where Chromium says why a renderer died, and a
+ * check that collects it but never prints it wastes the only evidence there is.
+ */
+let lastAppOutput = [];
+
 /** Start the app and attach to it. */
 async function launch(agentHome, extraEnv = {}, expectSession = true) {
 	const port = await freePort();
@@ -177,21 +198,50 @@ async function launch(agentHome, extraEnv = {}, expectSession = true) {
 	delete env.NODE_OPTIONS;
 	delete env.ELECTRON_RUN_AS_NODE;
 
-	const app = spawn(ELECTRON_BINARY, [".", `--remote-debugging-port=${port}`], {
-		cwd: ROOT,
-		env,
-		stdio: ["ignore", "pipe", "pipe"],
-	});
+	// `--disable-gpu` because this check has no opinion about how the pixels were
+	// produced: it drives the interface over CDP and reads the DOM back. Left on,
+	// the check inherits a dependency on the host's GPU stack, and on a machine
+	// where the GPU process cannot start the failure surfaces as
+	// `FAIL Target crashed` on the very first launch — which reads as a broken
+	// application and sends the reader hunting through their own diff. Seen for
+	// real: the same build passed 164/164 and then crashed six times in a row,
+	// with `GPU process isn't usable. Goodbye.` on stderr.
+	const app = spawn(
+		ELECTRON_BINARY,
+		[
+			".",
+			`--remote-debugging-port=${port}`,
+			"--disable-gpu",
+			"--disable-gpu-compositing",
+			"--disable-gpu-sandbox",
+			"--disable-software-rasterizer",
+			"--no-sandbox",
+		],
+		{
+			cwd: ROOT,
+			env,
+			stdio: ["ignore", "pipe", "pipe"],
+		},
+	);
 
 	const output = [];
 	let exited = false;
+	lastAppOutput = output;
 	app.stdout.on("data", (chunk) => output.push(String(chunk)));
 	app.stderr.on("data", (chunk) => output.push(String(chunk)));
 	app.on("exit", () => {
 		exited = true;
 	});
 
-	const page = await waitForPage(port, () => exited);
+	// The application's own output is the only evidence about why it did not come
+	// up, and it is collected two lines up. Discarding it leaves the reader with
+	// an opaque "Target crashed" or "never opened a window", which is the kind of
+	// message that sends someone hunting through their own diff for a fault that
+	// is not there.
+	const page = await waitForPage(port, () => exited).catch((error) => {
+		const log = output.join("").trim();
+		throw new Error(`${error.message}\n--- application output ---\n${log || "(nothing on stdout or stderr)"}`);
+	});
 	const client = connect(page);
 
 	// Two readiness signals, in order, because the obvious one is wrong: the
@@ -498,9 +548,30 @@ async function main() {
 		const second = await launch(agentHome, { GDOU_CONTEXT_BUDGET: "800" });
 		client = second.client;
 
-		const restored = await client.evaluate(READ_TRANSCRIPT);
+		// Opening the app defaults to a fresh conversation; the previous one is
+		// not dragged back onto the screen. Persistence is still what it always
+		// was — the file is on disk and reachable one click away — but the
+		// default is a blank composer, so that is what is asserted here before
+		// reopening the stored conversation to prove the history survived.
+		const fresh = await client.evaluate(READ_TRANSCRIPT);
+		check("a fresh launch opens a new conversation, not the old one", fresh.emptyShown === true, String(fresh.emptyShown));
+		check("the stored conversation is still on disk", sessionFiles().length === 1, sessionFiles().join(", "));
 
-		check("restored transcript is not empty", !restored.emptyShown, String(restored.emptyShown));
+		// The history did not vanish with the default change — it is opened
+		// explicitly, which is the path the "restart" assertions used to cover
+		// implicitly when the app reopened it for them.
+		const storedId = await client.evaluate(
+			"window.gdou.listSessions('general').then((s) => s[0]?.id)",
+		);
+		await client.evaluate(`window.gdou.openSession(${JSON.stringify(storedId)})`);
+		await waitFor(
+			client,
+			"document.querySelector('.msg-user .body')?.textContent ?? ''",
+			(value) => value === "你好",
+			"the stored conversation to reopen",
+		);
+
+		const restored = await client.evaluate(READ_TRANSCRIPT);
 		check("user message came back", restored.userText.includes("你好"), restored.userText);
 		check("assistant text came back", restored.assistantText.includes("脚本化运行"), restored.assistantText.slice(0, 120));
 		check("closing text came back", restored.assistantText.includes("工具执行完毕"), restored.assistantText.slice(0, 200));
@@ -814,8 +885,10 @@ async function main() {
 
 		const chrome = await client.evaluate(`(() => ({
 			controls: ["win-minimize", "win-maximize", "win-close"].every((id) => !!document.getElementById(id)),
-			nav: document.querySelectorAll("#primary-nav button").length,
-			modes: document.querySelectorAll("#mode-switch button").length,
+			navViews: [...document.querySelectorAll("#primary-nav button")].map((b) => b.dataset.view),
+			viewSections: [...document.querySelectorAll("#main > .view")].map((s) => s.id.replace("view-", "")),
+			modes: [...document.querySelectorAll("#mode-switch button")].map((b) => b.dataset.mode),
+			pickerModes: [...document.getElementById("profile").options].map((o) => o.value),
 			activeMode: document.querySelector("#mode-switch button.active")?.dataset.mode ?? "",
 			conversations: document.querySelectorAll("#conversation-list .conversation-row").length,
 			collapsed: document.getElementById("shell").classList.contains("sidebar-collapsed"),
@@ -823,8 +896,29 @@ async function main() {
 		}))()`);
 		check("window controls are present", chrome.controls === true, String(chrome.controls));
 		check("the titlebar has a drag region", chrome.titlebar === true);
-		check("the sidebar nav has four entries", chrome.nav === 4, String(chrome.nav));
-		check("the mode switch has one button per mode", chrome.modes === 2, String(chrome.modes));
+		// Asserted against the pages rather than a fixed number. The count was
+		// written as "four" when there were four, and adding a page then meant
+		// editing a constant here to keep a passing suite passing — which is the
+		// same trap the mode-switch check below was written to avoid. What must
+		// hold is that the sidebar offers every page, in the order they appear,
+		// and invents none.
+		check(
+			"the sidebar lists every page and invents none",
+			chrome.navViews.length > 0 && chrome.navViews.join(",") === chrome.viewSections.join(","),
+			`nav [${chrome.navViews.join(", ")}] vs pages [${chrome.viewSections.join(", ")}]`,
+		);
+		// Asserted against the picker rather than a fixed count. Modes are files
+		// anyone can add now, so "there are exactly two" is a statement about
+		// this machine, not about the product — and a project that defines its
+		// own modes would make it fail. What must hold is that the switch shows
+		// the *first* modes, in the catalog's order, and invents none.
+		check(
+			"the mode switch mirrors the first modes of the picker",
+			chrome.modes.length > 0 &&
+				chrome.modes.length <= chrome.pickerModes.length &&
+				chrome.modes.join(",") === chrome.pickerModes.slice(0, chrome.modes.length).join(","),
+			`switch [${chrome.modes.join(", ")}] of picker [${chrome.pickerModes.join(", ")}]`,
+		);
 		check("the mode switch reflects the running mode", chrome.activeMode === PROFILE, chrome.activeMode);
 		check(
 			"the sidebar lists the stored conversations",
@@ -870,6 +964,15 @@ async function main() {
 		);
 		check("the inspector shows a context bar after a request", inspector.hasBar === true, String(inspector.hasBar));
 		check("the inspector is resizable", inspector.divider === true);
+		// The row exists even when there is nothing to say. Its absence would be
+		// invisible — the reader cannot tell "no fallback configured" from "this
+		// build has no such feature" — and the disclosure only means anything if
+		// the empty case is stated rather than omitted.
+		check(
+			"the inspector discloses the fallback model either way",
+			inspector.session.includes("备用模型"),
+			inspector.session.slice(0, 80),
+		);
 
 		// The theme choice has to survive a reload, so it is stored rather than
 		// kept in memory.
@@ -1154,6 +1257,219 @@ async function main() {
 		const agentBuilt = screen.agentClass.includes("ok");
 		check("session probe reported a result", agentBuilt || screen.agentClass.includes("bad"), screen.agentClass);
 
+		// ------------------------------------------------------ settings page
+
+		// The page that makes the application usable at all. Without a way to
+		// enter a credential, a machine that has no provider environment variables
+		// has no reachable model and no way to add one — so "the window opens" is
+		// the only thing it can ever do. Everything below exists to keep that from
+		// silently regressing.
+		process.stdout.write("\nsettings\n");
+
+		await client.evaluate("document.querySelector('[data-view=settings]').click()");
+		await waitFor(
+			client,
+			"document.querySelectorAll('#credential-list .cred-row').length",
+			(count) => Number(count) >= 5,
+			"the credential rows",
+		);
+
+		const pristine = await client.evaluate(`(() => ({
+			active: document.querySelector("#primary-nav button.active")?.dataset.view ?? "",
+			rows: [...document.querySelectorAll("#credential-list .cred-row")].map((r) => ({
+				idle: r.querySelector(".status-pill")?.classList.contains("status-pill--idle") ?? false,
+				removeDisabled: r.querySelector("button.ghost")?.disabled ?? null,
+			})),
+			authPath: document.getElementById("auth-path")?.textContent ?? "",
+			note: document.getElementById("model-note")?.textContent ?? "",
+		}))()`);
+
+		check("the settings page opens", pristine.active === "settings", pristine.active);
+		check("every preset gets a row", pristine.rows.length >= 5, `${pristine.rows.length} row(s)`);
+		check("a clean home reports nothing configured", pristine.rows.every((row) => row.idle));
+		check("the page names the credential file", pristine.authPath.endsWith("auth.json"), pristine.authPath);
+		check("with nothing usable there is no model to pick", pristine.note.includes("没有模型可选"), pristine.note);
+		// Removal is offered only for a key we own. A key that arrived through the
+		// environment has no file behind it, and an enabled button would promise a
+		// deletion that cannot happen.
+		check("there is nothing to delete yet", pristine.rows.every((row) => row.removeDisabled === true));
+
+		const FIXTURE_KEY = "sk-gui-check-fixture-0000beef";
+		await client.evaluate(`(() => {
+			const row = [...document.querySelectorAll("#credential-list .cred-row")]
+				.find((r) => r.textContent.includes("DEEPSEEK_API_KEY"));
+			row.querySelector(".cred-input").value = ${JSON.stringify(FIXTURE_KEY)};
+			row.querySelector("button.outline-button").click();
+		})()`);
+		await waitFor(
+			client,
+			"document.querySelectorAll('#credential-list .status-pill:not(.status-pill--idle)').length",
+			(count) => Number(count) >= 1,
+			"the saved key to be reported",
+		);
+
+		const configured = await client.evaluate(`(() => ({
+			status: [...document.querySelectorAll("#credential-list .cred-row")]
+				.find((r) => r.textContent.includes("DEEPSEEK_API_KEY"))
+				?.querySelector(".status-pill")?.textContent ?? "",
+			body: document.getElementById("view-settings")?.textContent ?? "",
+			providers: [...document.getElementById("model-provider").options].map((o) => o.value),
+			models: [...document.getElementById("model-id").options].map((o) => o.value),
+		}))()`);
+
+		check("the row reports the key as configured", configured.status.includes("已配置"), configured.status);
+		// The masked hint is the whole point of the row: "which key is installed"
+		// is answerable without the value existing anywhere the renderer can read.
+		check("the row shows only a masked hint", configured.status.includes("••••"), configured.status);
+		check("the key is never rendered", !configured.body.includes(FIXTURE_KEY));
+		check("nor any long fragment of it", !configured.body.includes(FIXTURE_KEY.slice(4, -4)));
+		check("the picker now offers the provider", configured.providers.includes("deepseek"), configured.providers.join(","));
+		check(
+			"and the provider's models",
+			configured.models.includes("deepseek/deepseek-flash"),
+			configured.models.slice(0, 3).join(","),
+		);
+
+		// Written under the throwaway home this check runs in. A store pointed at
+		// pi's own directory would land in the real user directory instead, which
+		// is precisely the failure this assertion exists to catch.
+		const credentialsFile = join(agentHome, "auth.json");
+		check("the key reached the credential file", existsSync(credentialsFile), credentialsFile);
+		check("and it is the key that was typed", readFileSync(credentialsFile, "utf-8").includes(FIXTURE_KEY));
+
+		// --------------------------------------------------- model switcher
+
+		await client.evaluate("document.querySelector('[data-view=chat]').click()");
+		// Asserted before anything is clicked. This is the assertion that would
+		// have caught the bug that shipped once: the menu declared `display: flex`
+		// without a `[hidden]` override, so the attribute meant nothing, the menu
+		// sat on screen from the moment the window opened, and every later
+		// attribute check happily reported it as closed.
+		check(
+			"the model menu starts closed",
+			(await client.evaluate(`getComputedStyle(document.getElementById("model-menu")).display`)) === "none",
+			await client.evaluate(`getComputedStyle(document.getElementById("model-menu")).display`),
+		);
+		await client.evaluate("document.getElementById('model-trigger').click()");
+		await waitFor(
+			client,
+			"document.querySelectorAll('#model-menu-list .model-menu-item').length",
+			(count) => Number(count) > 0,
+			"the model menu to fill",
+		);
+
+		const modelMenu = await client.evaluate(`(() => {
+			const menu = document.getElementById("model-menu");
+			return {
+				items: [...document.querySelectorAll("#model-menu-list .model-menu-item")].map((b) => ({
+					label: b.textContent.trim(),
+					checked: b.getAttribute("aria-checked"),
+				})),
+				// Computed style, not the hidden property: the attribute states
+				// an intent, display is what the reader sees, and the two came
+				// apart once already.
+				visible: getComputedStyle(menu).display !== "none",
+				expanded: document.getElementById("model-trigger").getAttribute("aria-expanded"),
+			};
+		})()`);
+
+		check("the composer menu opens", modelMenu.visible === true && modelMenu.expanded === "true", String(modelMenu.expanded));
+		check("it lists the configured provider's models", modelMenu.items.length > 0, `${modelMenu.items.length} item(s)`);
+		// Exactly one, not at least one: a switcher that cannot say which model is
+		// running is worse than no switcher, because the menu and the status line
+		// would then disagree with nothing to arbitrate between them.
+		check(
+			"exactly one entry is marked current",
+			modelMenu.items.filter((item) => item.checked === "true").length === 1,
+			modelMenu.items.map((item) => `${item.label}${item.checked === "true" ? "*" : ""}`).join(" | "),
+		);
+
+		// Structure, not only visibility. The menu sits on `body` with `fixed`
+		// coordinates because the composer's ancestors set `overflow: hidden` —
+		// nested, it was drawn and then clipped away, which reads as a broken menu
+		// rather than a covered one. These assertions are what keep it out there.
+		const menuBox = await client.evaluate(`(() => {
+			const el = document.getElementById("model-menu");
+			const rect = el.getBoundingClientRect();
+			return {
+				onBody: el.parentElement === document.body,
+				position: getComputedStyle(el).position,
+				insideVertically: rect.top >= 0 && rect.bottom <= window.innerHeight + 1,
+				insideHorizontally: rect.left >= 0 && rect.right <= window.innerWidth + 1,
+			};
+		})()`);
+		check("the menu is not nested in the composer", menuBox.onBody === true, String(menuBox.onBody));
+		check("it is placed against the viewport", menuBox.position === "fixed", menuBox.position);
+		check(
+			"and lands entirely inside it",
+			menuBox.insideVertically && menuBox.insideHorizontally,
+			`${menuBox.insideVertically} / ${menuBox.insideHorizontally}`,
+		);
+
+		// Choosing one has to actually choose it. The menu lives on `body` now, so
+		// the outside-press handler must exempt both the trigger and the menu —
+		// otherwise the press closes the menu before the row's own click handler
+		// runs, and picking a model silently does nothing at all.
+		const chosenSpec = await client.evaluate(`(() => {
+			const item = [...document.querySelectorAll("#model-menu-list .model-menu-item")]
+				.find((b) => b.getAttribute("aria-checked") !== "true");
+			if (!item) return null;
+			const spec = item.dataset.spec;
+			item.click();
+			return spec;
+		})()`);
+		if (chosenSpec) {
+			await waitFor(
+				client,
+				`document.getElementById("model-label").textContent`,
+				(text) => String(text).includes(chosenSpec.split("/")[1]),
+				"the running model to change",
+			);
+			check("choosing a model changes the running one", true, chosenSpec);
+			check(
+				"the menu closes after choosing",
+				(await client.evaluate(`getComputedStyle(document.getElementById("model-menu")).display`)) === "none",
+			);
+		}
+
+		// Escape is how a popover is dismissed, and a popover that ignores it holds
+		// the reader hostage to a control they cannot leave without clicking.
+		await client.evaluate("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))");
+		check(
+			"Escape closes it, visibly",
+			(await client.evaluate(`getComputedStyle(document.getElementById("model-menu")).display`)) === "none",
+		);
+
+		// --------------------------------------------------- put it back
+
+		// The home is returned to how it was found. The next section asserts what
+		// a machine with no credentials does, and a fixture key left behind would
+		// quietly turn those assertions into tests of something else.
+		await client.evaluate("document.querySelector('[data-view=settings]').click()");
+		await waitFor(
+			client,
+			"document.querySelectorAll('#credential-list .cred-row').length",
+			(count) => Number(count) >= 5,
+			"the credential rows to come back",
+		);
+		await client.evaluate(`(() => {
+			const row = [...document.querySelectorAll("#credential-list .cred-row")]
+				.find((r) => r.textContent.includes("DEEPSEEK_API_KEY"));
+			row.querySelector("button.ghost").click();
+		})()`);
+		await waitFor(
+			client,
+			"document.querySelectorAll('#credential-list .status-pill:not(.status-pill--idle)').length",
+			(count) => Number(count) === 0,
+			"the key to be removed",
+		);
+		check(
+			"removing the key puts the row back",
+			(await client.evaluate(`[...document.querySelectorAll("#credential-list .cred-row")]
+				.find((r) => r.textContent.includes("DEEPSEEK_API_KEY")).querySelector("button.ghost").disabled`)) === true,
+		);
+		check("and the file no longer holds it", !readFileSync(credentialsFile, "utf-8").includes(FIXTURE_KEY));
+
 		await second.stop();
 		await sleep(1500);
 
@@ -1247,5 +1563,7 @@ async function main() {
 
 await main().catch((error) => {
 	process.stdout.write(`\nFAIL ${error.message}\n`);
+	const log = lastAppOutput.join("").trim();
+	if (log) process.stdout.write(`--- application output ---\n${log}\n`);
 	process.exit(1);
 });

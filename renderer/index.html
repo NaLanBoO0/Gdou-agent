@@ -105,6 +105,12 @@
 						</svg>
 						Skills<kbd>Ctrl+4</kbd>
 					</button>
+					<button type="button" data-view="settings">
+						<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+							<circle cx="12" cy="12" r="3.2" /><path d="M12 2.6v3M12 18.4v3M21.4 12h-3M5.6 12h-3M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1M18.6 18.6l-2.1-2.1M7.5 7.5 5.4 5.4" />
+						</svg>
+						设置<kbd>Ctrl+5</kbd>
+					</button>
 				</nav>
 
 				<section class="side-section conversations">
@@ -193,7 +199,15 @@
 									<textarea id="input" rows="1" placeholder="输入消息…（Enter 发送，Shift+Enter 换行）"></textarea>
 									<div class="composer-toolbar">
 										<span></span>
-										<div class="model-label"><i id="model-dot"></i><span id="model-label"></span></div>
+										<div class="model-picker">
+											<button type="button" id="model-trigger" class="model-trigger" aria-haspopup="dialog" aria-expanded="false" title="切换模型">
+												<i id="model-dot"></i>
+												<span id="model-label"></span>
+												<svg class="model-trigger-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+													<path d="m6 15 6-6 6 6" />
+												</svg>
+											</button>
+										</div>
 										<button id="send" class="send" type="submit" aria-label="发送">
 											<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
 												<path d="M12 19V5M6 11l6-6 6 6" />
@@ -309,6 +323,40 @@
 					</div>
 				</section>
 
+				<!-- -------------------------------------------------- settings -->
+				<section class="view" id="view-settings" hidden>
+					<div class="simple-page scroll-thin">
+						<header>
+							<div>
+								<h1>模型与凭据</h1>
+								<p>
+									API key 只写进本机的 <code>auth.json</code>（文件权限 0600），不外发。
+									这里存的 key <b>优先于</b>同名环境变量——存了就用存的。
+								</p>
+							</div>
+							<button class="outline-button" type="button" id="credentials-refresh">重新读取</button>
+						</header>
+
+						<div class="cred-card">
+							<h2>这个会话用哪个模型</h2>
+							<div class="cred-form">
+								<select id="model-provider" class="picker" aria-label="服务商"></select>
+								<select id="model-id" class="picker" aria-label="模型"></select>
+								<button class="outline-button" type="button" id="model-apply">应用</button>
+								<button class="ghost" type="button" id="model-reset">恢复默认</button>
+							</div>
+							<p class="cred-note" id="model-note">正在读取…</p>
+						</div>
+
+						<div class="cred-list" id="credential-list"></div>
+
+						<p class="cred-note">
+							也可以直接编辑 <code id="auth-path">auth.json</code>。
+							没有列在这里的服务商，把 key 写进它对应的环境变量同样有效。
+						</p>
+					</div>
+				</section>
+
 				<!-- ----------------------------------------------- diagnostics -->
 				<section class="panel scroll-thin" id="diagnostics" hidden>
 					<div class="panel-head">
@@ -349,6 +397,26 @@
 				</section>
 			</main>
 		</div>
+
+		<!-- The model menu lives outside the composer, not inside it.
+		     `.work-layout` sets `overflow: hidden`, so a popover nested in the
+		     composer is clipped by that ancestor instead of floating over the page —
+		     it rendered but was cut off, which reads as "the menu is broken" rather
+		     than "the menu is behind something". Parked on `body` and placed with
+		     fixed coordinates from the trigger's rect, it escapes every clipping and
+		     stacking context in between. -->
+		<section class="model-menu" id="model-menu" hidden role="dialog" aria-label="选择模型">
+			<header>
+				<span>模型</span>
+				<button type="button" id="model-manage" title="管理 key 与模型" aria-label="管理 key 与模型">
+					<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+						<circle cx="12" cy="12" r="3.2" /><path d="M12 2.6v3M12 18.4v3M21.4 12h-3M5.6 12h-3M18.6 5.4l-2.1 2.1M7.5 16.5l-2.1 2.1M18.6 18.6l-2.1-2.1M7.5 7.5 5.4 5.4" />
+					</svg>
+				</button>
+			</header>
+			<div class="model-menu-list" id="model-menu-list" role="menu"></div>
+			<p class="model-menu-note" id="model-menu-note"></p>
+		</section>
 
 		<script src="app.js"></script>
 	</body>

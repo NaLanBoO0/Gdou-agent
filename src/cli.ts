@@ -29,8 +29,17 @@ import {
 } from "./kernel/permission.ts";
 import { narrowTools, type RecipeRequest } from "./kernel/recipe.ts";
 import { toolchainPaths } from "./kernel/toolchain.ts";
-import { listProfiles, getProfile } from "./profiles/registry.ts";
-import { AGENT_HOME, describePiSource, expertsDir, IS_BUNDLED, PROJECT_ROOT, projectExpertsDir } from "./paths.ts";
+import { getProfile, loadProfiles } from "./profiles/registry.ts";
+import {
+	AGENT_HOME,
+	describePiSource,
+	expertsDir,
+	IS_BUNDLED,
+	modesDir,
+	PROJECT_ROOT,
+	projectExpertsDir,
+	projectModesDir,
+} from "./paths.ts";
 import { canRunTui, runTui } from "./tui/index.ts";
 import { bold, cyan, dim, green, red, yellow } from "./ui/style.ts";
 
@@ -95,13 +104,20 @@ interface CliOptions {
 	yes: boolean;
 }
 
-/** Commands that exit without running a prompt. */
+/**
+ * Commands that exit without running a prompt.
+ *
+ * `cwd` rides along on the listing commands because modes and experts are both
+ * found partly relative to the working directory: `<cwd>/.gdou-agent/modes/`
+ * and `<cwd>/.gdou-agent/experts/`. Without it, `--cwd` would be silently
+ * ignored by exactly the commands whose output it changes.
+ */
 type CliCommand =
 	| { kind: "help" }
-	| { kind: "list-profiles" }
-	| { kind: "list-experts" }
+	| { kind: "list-profiles"; cwd?: string }
+	| { kind: "list-experts"; cwd?: string }
 	| { kind: "list-providers" }
-	| { kind: "list-tools"; profile?: string; expert?: string }
+	| { kind: "list-tools"; profile?: string; expert?: string; cwd?: string }
 	| { kind: "doctor" };
 
 function parseCli(argv: string[]): CliOptions | CliCommand {
@@ -129,14 +145,14 @@ function parseCli(argv: string[]): CliOptions | CliCommand {
 	});
 
 	if (values.help) return { kind: "help" };
-	if (values["list-profiles"]) return { kind: "list-profiles" };
-	if (values["list-experts"]) return { kind: "list-experts" };
+	if (values["list-profiles"]) return { kind: "list-profiles", cwd: values.cwd };
+	if (values["list-experts"]) return { kind: "list-experts", cwd: values.cwd };
 	if (values["list-providers"]) return { kind: "list-providers" };
 	if (values["list-tools"]) {
 		// Accept `--list-tools <profileId>` or `--list-tools -p <profileId>`.
 		const fromPositional = positionals[0];
 		const profile = values.profile ?? fromPositional;
-		const command: CliCommand = { kind: "list-tools" };
+		const command: CliCommand = { kind: "list-tools", cwd: values.cwd };
 		if (profile !== undefined) command.profile = profile;
 		// `--expert` applies here too: the whole point of listing tools is to see
 		// what the expert narrowed the set down to.
@@ -180,12 +196,27 @@ function printHelp(): void {
 	process.stdout.write(`${USAGE}\n`);
 }
 
-function printProfiles(): void {
-	process.stdout.write(`${bold("Profiles")}\n`);
-	for (const profile of listProfiles()) {
-		process.stdout.write(`  ${cyan(profile.id.padEnd(10))} ${profile.description}\n`);
+function printProfiles(cwd: string): void {
+	const catalog = loadProfiles({ cwd });
+	process.stdout.write(`${bold("Modes")}\n`);
+	for (const profile of catalog.profiles) {
+		// The file path is shown only for modes that came from a file. Printing
+		// "built-in" on the shipped ones would be noise on every run; printing
+		// the path answers "which file is this mode from" at the one moment
+		// that question exists.
+		const origin = profile.source && !profile.source.startsWith("(built-in)") ? `  ${dim(profile.source)}` : "";
+		// A mode's model is a suggestion, not a setting, so it is shown as a
+		// note rather than a column: twice in a list of modes, the interesting
+		// fact is that a mode has an opinion at all — not what the opinion is.
+		const pinned = profile.model ? `  ${dim(`suggests ${profile.model}`)}` : "";
+		process.stdout.write(`  ${cyan(profile.id.padEnd(12))} ${profile.description}${pinned}${origin}\n`);
 	}
-	process.stdout.write(`\n${dim("Select with --profile <id>.")}\n`);
+	if (catalog.errors.length > 0) {
+		process.stdout.write(`\n${red("Some mode files could not be loaded:")}\n`);
+		for (const error of catalog.errors) process.stdout.write(`  ${error}\n`);
+	}
+	process.stdout.write(`\n${dim("Select with --profile <id>. Modes load from")}\n`);
+	process.stdout.write(`  ${dim(`${modesDir()}  and  ${projectModesDir(cwd)}`)}\n`);
 }
 
 function printProviders(): void {
@@ -201,7 +232,7 @@ function printProviders(): void {
 
 async function printTools(profileId: string | undefined, expertId: string | undefined, cwd: string): Promise<void> {
 	const id = profileId ?? loadSettings().mode ?? "general";
-	const profile = getProfile(id);
+	const profile = getProfile(id, cwd);
 	const expert = expertId === undefined ? undefined : getExpert(expertId, cwd);
 
 	// The same narrowing the session applies, so this is a truthful preview of
@@ -424,16 +455,16 @@ async function main(): Promise<number> {
 				printHelp();
 				return 0;
 			case "list-profiles":
-				printProfiles();
+				printProfiles(parsed.cwd ?? process.cwd());
 				return 0;
 			case "list-experts":
-				printExperts(process.cwd());
+				printExperts(parsed.cwd ?? process.cwd());
 				return 0;
 			case "list-providers":
 				printProviders();
 				return 0;
 			case "list-tools":
-				await printTools(parsed.profile, parsed.expert, process.cwd());
+				await printTools(parsed.profile, parsed.expert, parsed.cwd ?? process.cwd());
 				return 0;
 			case "doctor":
 				printDoctor();
