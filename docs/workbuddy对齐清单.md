@@ -81,7 +81,7 @@ kamibuddy 用 `utilityProcess` 隔开。要不要跟，取决于我们什么时�
 | B4 | 中断与插队 | abortController + 排队消息可 ↑ 拉回编辑 | abort（CLI/TUI/GUI 都有） | 🟡 无插队、无排队 |
 | B5 | fallback 模型 | overloaded 先重试主模型再切 fallback | `kernel/fallback.ts`：**在产出任何内容之前**失败才切；先重试同一模型，重试耗尽才换；切换发 `notice`；`AgentSession.fallback` 暴露给前端 | ✅ **已完成（2026-09-23）** |
 | B6 | 推理强度 | reasoningEffort + 设置项 + alwaysThinkingEnabled | pi `thinkingLevel`（逐会话持久化、resume 还原）；专家可声明 `thinkingLevel` | ✅ v1：无 per-model 档位 |
-| B7 | 场景模型变体 | `relatedModels.{lite,reasoning}`，lite 用于子代理/压缩/评估 | 模式文件的 `model:` 字段——**最低优先级建议**（选项 > 设置 > 模式），未知 spec 在会话启动时报错并点名模式与文件 | 🟡 **部分完成（2026-09-23）**：有了「按场景选模型」的机制，但**还没有任何调用点真的用它**——压缩、评估、子代理都还没有，所以它现在是给用户用的，不是内部省钱用的 |
+| B7 | 场景模型变体 | `relatedModels.{lite,reasoning}`，lite 用于子代理/压缩/评估 | 模式文件的 `model:` 字段——**最低优先级建议**（选项 > 设置 > 模式），未知 spec 在会话启动时报错并点名模式与文件；**第一个调用点已到（2026-09-23）**：`delegate` 工具的 `model` 参数可指向 lite 模型 | ✅ **机制 + 首个调用点已完成（2026-09-23）** |
 | B8 | 模型目录 | 内置 product.json（云下发）+ 用户/项目 models.json + 白名单 | pi 内置 provider 目录；`--list-providers` | 🟡 无用户级自定义模型 |
 | B9 | 结构化输出 | `StructuredOutput` 工具，按 JSON Schema 返回 | 无 | ❌ |
 | B10 | 死循环检测 | 同参重复 N 次发喝止消息 | `kernel/loop-guard.ts`：同工具同参数**连续**重复超过 N 次（默认 3）拦下，理由作为 error 工具结果回给模型；拦在**权限门之后**；`loopRepeatLimit: 0` 关掉 | ✅ **已完成（2026-09-23）** |
@@ -115,7 +115,7 @@ kamibuddy 用 `utilityProcess` 隔开。要不要跟，取决于我们什么时�
 | C7 | 提问 | AskUserQuestion（多选 + 分页 + 绑定会话） | 无（只有纯文本追问） | ❌ |
 | C8 | 计划模式 | EnterPlanMode / ExitPlanMode | 无 | ❌ |
 | C9 | 任务清单 | TodoWrite + Task 系列（依赖关系解除阻塞） | 无 | ❌ |
-| C10 | 子代理 | Agent 工具：独立上下文、`subagent_type`、maxTurns 下限 200 | 无 | ❌ |
+| C10 | 子代理 | Agent 工具：独立上下文、`subagent_type`、maxTurns 下限 200 | `tools/delegate.ts`：`delegate` 工具派独立 `createAgent` 跑完返回文本；**继承父模式**（权限面不在用户背后变大）；`includeDelegate: false` 防递归；`model` 参数可指向 lite 模型（**B7 第一个调用点**）；子代理继承父的传输 | ✅ **已完成（2026-09-23）** |
 | C11 | 多代理团队 | TeamCreate/SendMessage + mailbox + delegate | 无 | ❌ |
 | C12 | 技能工具 | Skill / SkillManage / SlashCommand | 无 | ❌ 见 E1 |
 | C13 | 定时任务 | CronCreate/List/Delete（会话级、3 天过期） | 无（GUI 有占位页） | ❌ |
@@ -564,7 +564,10 @@ O2 我们走 BYOK，与 WorkBuddy 的 OAuth 是**形态不同而非落后**。
 
 ### 第三梯队 · 生态
 
-MCP（I）→ 提问（C7）→ 待办（C9）→ 子代理（C10）→ 自动化（C13）→ 记忆（J）。
+MCP（I）→ 提问（C7）→ 待办（C9）→ 子代理（C10 ✅）→ 自动化（C13）→ 记忆（J）。
+
+**子代理（C10）已完成（2026-09-23）**，它是 B7「按场景选模型」的第一个调用点——
+`delegate` 的 `model` 参数能指向 lite 模型，省钱机制第一次被内部环节消费。
 
 **MCP 排在这条链的最前面**，因为它是「用现成的」最典型的落点：接一个 SDK，
 能力面立刻扩大，**不需要我们实现任何工具**。但它的安全面也最大——
@@ -584,9 +587,10 @@ MCP（I）→ 提问（C7）→ 待办（C9）→ 子代理（C10）→ 自动�
 
 ### 一句话
 
-**第零梯队、第一梯队、以及第二梯队的 F1+F2、B10 / B5 / B7 机制、E1 skills、N6 / N7 / N9
-都已完成（2026-09-23）**，所以下一个是**第三梯队的子代理**（C10）——B7 真正开始省钱
-要等到那时候，JEV 前置模型（见文末探索项）也挂在那之后。
+**第零梯队、第一梯队、以及第二梯队的 F1+F2、B10 / B5 / B7、E1 skills、N6 / N7 / N9、
+第三梯队的子代理 C10 都已完成（2026-09-23）**。B7 现在有了第一个调用点（子代理的
+lite 模型），真正开始省钱。下一个是**第三梯队的 MCP**——「用现成的」最典型落点，
+但必须在权限门之后（权限门早已就位）。
 其余都排在这之后——不是不重要，是**顺序错了会付两次代价**。
 
 **每加一个外发能力都要把一个推理重走一遍**：`web_fetch` 落地时，

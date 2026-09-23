@@ -78,6 +78,7 @@ export type { Expert, ExpertDraft } from "./experts/types.ts";
 export { getSkill, listSkills, loadSkills, readSkillReference, type SkillCatalog } from "./skills/registry.ts";
 export type { Skill, SkillDraft, SkillReference } from "./skills/types.ts";
 export { loadSkillTool } from "./tools/load-skill.ts";
+export { delegateTool } from "./tools/delegate.ts";
 
 // Markdown-backed definitions, shared by modes and experts
 export { parseFrontmatter, type Frontmatter } from "./definitions/frontmatter.ts";

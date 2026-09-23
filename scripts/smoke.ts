@@ -223,7 +223,8 @@ async function checkExperts(): Promise<void> {
 	check("a satisfiable tool list reports nothing unavailable", narrowed.unavailable.length === 0);
 
 	// The safety property. An expert naming tools the mode does not have must
-	// not conjure them.
+	// not conjure them. `sudo` and `rm-rf` are not tools anywhere; `read` and
+	// `bash` now *are* in general, so only the two invented ones are unavailable.
 	const greedy: Expert = { ...audit, tools: ["read", "bash", "sudo", "rm-rf"] };
 	const general = getProfile("general");
 	const generalTools = await general.tools({ cwd: process.cwd() });
@@ -236,10 +237,12 @@ async function checkExperts(): Promise<void> {
 	);
 	check(
 		"tools the mode lacks are reported",
-		forced.unavailable.join(",") === "read,bash,sudo,rm-rf",
+		forced.unavailable.join(",") === "sudo,rm-rf",
 		forced.unavailable.join(","),
 	);
-	check("a cross-mode expert can leave no tools at all", forced.tools.length === 0, `${forced.tools.length}`);
+	// The two invented names are the only ones reported missing; the two real
+	// ones (`read`, `bash`) survive the narrowing because the mode has them.
+	check("an invented tool is reported, not conjured", forced.tools.map((t) => t.name).join(",") === "read,bash", forced.tools.map((t) => t.name).join(","));
 
 	// ---- prompt composition ---------------------------------------------
 	const modePrompt = general.systemPrompt({ cwd: "C:/tmp" });
@@ -264,13 +267,15 @@ async function checkExperts(): Promise<void> {
 		session.recipe.mode === "coding" && session.recipe.expert === "security-audit",
 		JSON.stringify(session.recipe),
 	);
-	// `load_skill` rides along with every session's tools, so the count is the
-	// narrowed four plus it — the meaningful assertion is that the *mode* tools
-	// were narrowed to exactly what the expert asked for, not the total.
+	// `load_skill` and `delegate` ride along with every session's tools, so the
+	// count is the narrowed four plus them — the meaningful assertion is that the
+	// *mode* tools were narrowed to exactly what the expert asked for, not the
+	// total.
 	const sessionToolNames = session.tools.map((t) => t.name);
+	const modeToolNames = sessionToolNames.filter((n) => n !== "load_skill" && n !== "delegate");
 	check(
 		"a session exposes the narrowed tools",
-		sessionToolNames.filter((n) => n !== "load_skill").join(",") === "read,grep,find,ls",
+		modeToolNames.join(",") === "read,grep,find,ls",
 		sessionToolNames.join(","),
 	);
 	check("the agent itself got the narrowed tools", session.agent.state.tools.some((t) => t.name === "load_skill"));
@@ -803,13 +808,21 @@ async function checkModes(): Promise<void> {
 		const general = getProfile("general", projectCwd);
 		check("the general mode reads its thinking level from the file", general.thinkingLevel === "off", general.thinkingLevel);
 		const generalTools = await general.tools({ cwd: projectCwd });
-		check("general builds its tools", generalTools.length === 5, `${generalTools.length} tools`);
-		check("general's tools are the ones its frontmatter lists", generalTools.map((t) => t.name).join(",") === "current_time,save_note,list_notes,web_search,web_fetch", generalTools.map((t) => t.name).join(","));
+		// Both modes now carry file and shell tools — the split is in *guidance*
+		// (the prompt), not in *capability*. So the assertion is that general has
+		// the full set, not that it lacks file access.
+		check("general builds its tools", generalTools.length === 13, `${generalTools.length} tools`);
 		check(
-			"general exposes no file tools",
-			!generalTools.some((t) => ["read", "write", "edit", "bash"].includes(t.name)),
+			"general's tools are the ones its frontmatter lists",
+			generalTools.map((t) => t.name).join(",") ===
+				"current_time,save_note,list_notes,read,bash,edit,write,grep,find,ls,present_files,web_search,web_fetch",
+			generalTools.map((t) => t.name).join(","),
 		);
-		check("general cannot deliver files", !generalTools.some((t) => t.name === "present_files"));
+		check(
+			"general can read files",
+			generalTools.some((t) => ["read", "bash", "edit", "write"].includes(t.name)),
+		);
+		check("general can deliver files", generalTools.some((t) => t.name === "present_files"));
 
 		const coding = getProfile("coding", projectCwd);
 		check("coding reads its execution strategy from the file", coding.toolExecution === "parallel", coding.toolExecution);
@@ -1593,6 +1606,75 @@ async function checkObservability(): Promise<void> {
 	}
 }
 
+async function checkDelegate(): Promise<void> {
+	console.log("\nDelegate (sub-agent)");
+
+	// 1. A top-level session carries `delegate`.
+	const top = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: process.cwd() });
+	const topNames = top.tools.map((tool) => tool.name);
+	check("a top-level session carries delegate", topNames.includes("delegate"), topNames.join(","));
+	top.dispose();
+
+	// 2. A sub-agent must not: `includeDelegate: false` strips it, so "delegate
+	//    everything" is one level, not an unbounded tree.
+	const sub = await createAgent({
+		recipe: { mode: "coding" },
+		model: "deepseek/deepseek-flash",
+		settings: {},
+		cwd: process.cwd(),
+		includeDelegate: false,
+	});
+	const subNames = sub.tools.map((tool) => tool.name);
+	check("a sub-agent does not carry delegate", !subNames.includes("delegate"), subNames.join(","));
+	check("a sub-agent still carries load_skill", subNames.includes("load_skill"));
+	sub.dispose();
+
+	// 3. The delegate tool actually runs a sub-agent and returns its text, and
+	//    the sub-agent inherits the scripted transport rather than reaching for a
+	//    real provider.
+	const faux = fauxProvider();
+	const models = createModels();
+	models.setProvider(faux.provider);
+	const scripted = faux.getModel();
+	faux.setResponses([fauxAssistantMessage(fauxText("sub result: 42"))]);
+	const streamFn: StreamFn = (_model, context, options) => models.streamSimple(scripted, context, options);
+
+	const session = await createAgent({
+		recipe: { mode: "coding" },
+		model: "deepseek/deepseek-flash",
+		settings: {},
+		cwd: process.cwd(),
+		streamFn,
+	});
+	const delegate = session.tools.find((tool) => tool.name === "delegate");
+	check("the delegate tool is present", delegate !== undefined);
+	if (delegate) {
+		const result = await delegate.execute("call-1", { task: "compute 21*2" });
+		const text = result.content.map((part) => (part.type === "text" ? part.text : "")).join("");
+		check("delegate returns the sub-agent's text", text.includes("sub result: 42"), text);
+		check("delegate reports the sub-agent's model", String(result.details?.model).includes("deepseek"), String(result.details?.model));
+		check("delegate reports the sub-agent's mode", result.details?.mode === "coding", String(result.details?.mode));
+	}
+	session.dispose();
+
+	// 4. A delegate from a general session inherits *general*, not coding: the
+	//    sub-agent's mode is the parent's mode, so the permission surface does not
+	//    grow behind the user's back.
+	const generalSession = await createAgent({
+		recipe: { mode: "general" },
+		model: "deepseek/deepseek-flash",
+		settings: {},
+		cwd: process.cwd(),
+		streamFn,
+	});
+	const generalDelegate = generalSession.tools.find((tool) => tool.name === "delegate");
+	if (generalDelegate) {
+		const result = await generalDelegate.execute("call-2", { task: "answer 2+2" });
+		check("a general session's sub-agent inherits general", result.details?.mode === "general", String(result.details?.mode));
+	}
+	generalSession.dispose();
+}
+
 async function main(): Promise<void> {
 	console.log("Module resolution");
 	check("pi-ai import resolves", typeof createModels === "function");
@@ -1821,6 +1903,7 @@ async function main(): Promise<void> {
 	await checkLoopGuard();
 	await checkModelFallback();
 	await checkObservability();
+	await checkDelegate();
 
 	console.log("\nSettings and credentials");
 	const settings = loadSettings();

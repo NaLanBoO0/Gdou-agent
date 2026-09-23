@@ -27,8 +27,8 @@ export const BUILTIN_MODES: ReadonlyArray<{ id: string; source: string }> = [
 		id: "general",
 		source: `---
 name: General
-description: "Everyday tasks: questions, planning, drafting, light analysis. No file or shell access."
-tools: [current_time, save_note, list_notes, web_search, web_fetch]
+description: "Everyday tasks: questions, planning, drafting, light analysis. Has file and shell access when a task needs it."
+tools: [current_time, save_note, list_notes, read, bash, edit, write, grep, find, ls, present_files, web_search, web_fetch]
 thinkingLevel: "off"
 ---
 
@@ -40,7 +40,9 @@ information, and light analysis.
 Guidelines:
 - Answer directly and concisely. Lead with the answer, then explain if needed.
 - Use tools when they genuinely help; do not narrate tool use.
-- If a task needs file or shell access, say so and suggest the coding mode.
+- You have file and shell access. Use it when a task actually needs it — read a
+  file to answer a question about it, run a command to verify a claim — but do
+  not reach for the filesystem for questions you can answer directly.
 `,
 	},
 	{

@@ -190,6 +190,19 @@ function autoScroll() {
 }
 
 /**
+ * Scroll to the bottom unconditionally.
+ *
+ * `autoScroll` refuses to move once the reader has scrolled up, which is right
+ * during a live run — the reader's position is a signal. But a *restored*
+ * session is a different event: the reader has not chosen a position yet, so the
+ * honest place to land is the newest message, not the top. That is why restoring
+ * uses this rather than `autoScroll`.
+ */
+function scrollToBottom() {
+	stream.scrollTop = stream.scrollHeight;
+}
+
+/**
  * Show or hide the empty state.
  *
  * Hidden rather than removed: it holds the hint text, and once removed there is
@@ -782,6 +795,10 @@ function applySession(started) {
 	// new output cannot render differently. This goes last: drawing a message
 	// hides the empty state, so anything that writes into it has to run first.
 	for (const event of started.history) handleEvent(event);
+	// A restored session lands on the newest message. `autoScroll` would not do
+	// this — the reader's "scroll up" position has not been set yet, but the
+	// distance from the bottom is already large, so it would stay at the top.
+	if (started.info.resumed > 0) scrollToBottom();
 	void refreshConversations();
 }
 

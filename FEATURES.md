@@ -73,6 +73,7 @@
 | 42 | **技能渐进式披露** | `skills/types.ts`、`skills/registry.ts`、`skills/builtin.ts`、`tools/load-skill.ts`、`kernel/agent.ts`、`kernel/recipe.ts` | 技能是「目录 + `SKILL.md` + 可选 `references/`」，三级加载（内置/用户/项目）。会话开始时提示里只有**名字+描述+when_to_use**，正文不注入；模型判断任务匹配后调 `load_skill` 读正文（可附带读一个 reference 文件）。这是三个自定义机制里**唯一真正新的**——几十个技能全文塞进提示就是几十万 token，正好把上下文裁剪省下的预算又花回去 |
 | 43 | **GUI 质感改造** | `renderer/tokens.css`、`renderer/shell.css`、`renderer/chat.css`、`renderer/index.html`、`renderer/app.js` | 侧栏加品牌区（logo 标识 + Beta 徽章）与醒目的**新建对话**主按钮；侧栏**可拖拽调宽**（180–420px，走 `--sidebar-w` CSS 变量，宽度持久化到 localStorage）；对话时间线右侧加**轮次圆点导航**（一点跳转、hover 气泡、上下渐隐遮罩、active 跟随滚动）；补阴影层次 token |
 | 44 | **观测（崩溃/日志/内存）** | `kernel/observability.ts`、`electron/main.ts`、`src/paths.ts` | 三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`：① **崩溃报告**——`uncaughtException`/`unhandledRejection`/`render-process-gone` 同步落盘（异步会丢），单次启动上限 50 条；② **运行日志**——会话启动/模型解析写一行，指纹采样防日志风暴；③ **内存诊断**——heap ≥1.5GB 时写 `process.report`。诊断页加「日志目录」行 |
+| 45 | **子代理（delegate）** | `tools/delegate.ts`、`kernel/agent.ts`、`profiles/builtin.ts` | `delegate` 工具把自包含子任务交给一个**独立上下文**的子代理跑完，返回最终文本。子代理**继承父模式**（不写死 coding，权限面不在用户背后变大）；防递归：`includeDelegate: false` 不含 delegate 本身。**B7 第一个调用点**：`model` 参数可指向 lite 模型。连带把 **general 模式也开放了文件/Shell 工具**——模式从「能力边界」退化成「工作风格」，两个模式主要在提示词上区分 |
 
 ---
 
@@ -1347,6 +1348,44 @@ tui / tools）全绿。
 
 验证：`smoke` 327（+5），覆盖「日志文件创建 / 未指纹行必写 / 重复行只写一次 /
 崩溃记录落盘 / 崩溃记录带消息」。
+
+---
+
+### 2.39 子代理（`delegate`）
+
+对齐清单 C10，也是**第三梯队的第一项**、B7「场景模型变体」的**第一个真正调用点**。
+
+`delegate` 工具把一个自包含的子任务交给一个**独立上下文**的子代理跑完，返回最终文本。
+三个决策是这个工具的实质，不是实现细节：
+
+1. **子代理是全新 `createAgent`，不继承父对话。** 这正是「子代理」的用途——一个长的、
+   自包含的钻取不该花掉父会话的上下文预算，也不该把中间过程堆进父消息。独立上下文的
+   代价是「子代理看不到父在聊什么」，所以 `task` 参数必须自带足够上下文，工具描述里写明了。
+2. **子代理继承父的模式，不写死 coding。** 第一版写死 `mode: "coding"`，于是 general
+   模式里 delegate 出的子代理也能读写文件——这是**静默的权限扩大**，不是便利。改成
+   子代理用父的 `recipe.mode`，工具面就不会在用户背后变大。这个决定连带改了 general
+   模式本身（见下）。
+3. **子代理不含 `delegate` 本身。** `includeDelegate: false` 让「把一切都 delegate」从
+   无界树变成**恰好一层**。嵌套 delegate 确实有用，但那是要**单独、刻意**做的决定，
+   不该是接线的意外产物。
+
+**连带的设计转变：general 模式也开放了文件/Shell 工具。** 触发点是用户实测 delegate
+时，模型在 general 模式里说「我读不了文件，子代理也读不了」——后半句错了（子代理
+当时写死 coding 有文件权限），但前半句暴露了一个真问题：**general 模式卡在「没有文件
+权限」，用户问个文件就得绕道。** 结论是「模式的价值在提示词引导，不在能力边界」——
+两个模式现在工具集趋同（都能读文件、跑命令、交付），区别是系统提示词：general 是
+「日常任务优先、需要时才碰文件」，coding 是「仓库开发、先读后改、跑检查」。这让模式
+从「能力边界」退化成「工作风格」，与专家（expert）的定位开始靠近，但这是更符合
+单机桌面 agent 实际用法的方向。
+
+**一个完整性的坑**：第一版 delegate 没继承主 agent 的 `streamFn`，于是脚本化预览下
+（`GDOU_SCRIPTED_RUN=1`，无 key）子代理会去调真实 provider 而失败。修成把 `streamFn`
+提成 `assemble` 里的变量、传给 `delegateTool`，子代理就和父用同一个传输——脚本化的
+保持脚本化，真实的保持真实。
+
+验证：`smoke` 327 → 335（+8），覆盖「顶层会话含 delegate / 子代理不含 delegate /
+子代理仍含 load_skill / delegate 返回子代理文本 / delegate 报告子代理模型 /
+delegate 报告子代理模式 / general 会话的子代理继承 general」。
 
 ---
 

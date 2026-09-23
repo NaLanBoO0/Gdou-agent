@@ -17,6 +17,7 @@ import type { AgentProfile, AnyTool } from "../profiles/types.ts";
 import { loadSkills } from "../skills/registry.ts";
 import type { Skill } from "../skills/types.ts";
 import { loadSkillTool } from "../tools/load-skill.ts";
+import { delegateTool } from "../tools/delegate.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
@@ -136,6 +137,14 @@ export interface CreateAgentOptions {
 	 * Falls back to settings, then to `DEFAULT_LOOP_REPEAT_LIMIT`.
 	 */
 	loopRepeatLimit?: number;
+	/**
+	 * Whether this session may spawn sub-agents via the `delegate` tool.
+	 *
+	 * Defaults to true for a top-level session; a sub-agent passes `false` so it
+	 * cannot spawn sub-agents of its own, which turns "delegate everything" from
+	 * an unbounded tree into exactly one level of delegation.
+	 */
+	includeDelegate?: boolean;
 }
 
 /** A tool call the permission gate refused. */
@@ -461,6 +470,37 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 	// just shown is worse than one that lags by a turn.
 	let lastContext: ContextStatus | undefined;
 
+	// Hoisted so the delegate tool can hand the same transport to a sub-agent: a
+	// sub-agent under a scripted run should stay scripted, not silently fall back
+	// to a real provider that is not configured for the preview.
+	const streamFn =
+		options.streamFn ??
+		defaultStreamFn(runtime, {
+			maxRetries: options.maxRetries,
+			fallback,
+			// Announced at the moment of the switch, not afterwards: the whole
+			// point of disclosing a fallback is that the user knows which model
+			// wrote the reply they are reading. Telling them once it is over
+			// would be a footnote rather than a disclosure. A caller-supplied
+			// `streamFn` bypasses this entirely — the wrapper only exists on the
+			// transport this module builds.
+			onFallback: (report: FallbackReport) => {
+				emit({
+					type: "notice",
+					message: `\`${report.from}\` 在产出任何内容之前就失败了（${report.reason}），已改用 \`${report.to}\` 重试。`,
+				});
+			},
+		});
+
+	// `delegate` rides along with `load_skill` in the session's tool list, but it
+	// is opt-out: a sub-agent passes `includeDelegate: false` so it cannot spawn
+	// sub-agents of its own, turning "delegate everything" from an unbounded tree
+	// into exactly one level. Built here, after `streamFn`, so the sub-agent
+	// inherits the same transport — a scripted run stays scripted.
+	if (options.includeDelegate !== false) {
+		allTools.push(delegateTool(cwd, recipe.mode, streamFn));
+	}
+
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: composePrompt(profile.systemPrompt({ cwd }), expert, skills.skills),
@@ -472,24 +512,7 @@ function assemble(setup: ResolvedSetup, selection: ToolSelection, options: Creat
 			// the agent leaves it alone rather than prepending a second one.
 			messages: options.messages,
 		},
-		streamFn:
-			options.streamFn ??
-			defaultStreamFn(runtime, {
-				maxRetries: options.maxRetries,
-				fallback,
-				// Announced at the moment of the switch, not afterwards: the whole
-				// point of disclosing a fallback is that the user knows which model
-				// wrote the reply they are reading. Telling them once it is over
-				// would be a footnote rather than a disclosure. A caller-supplied
-				// `streamFn` bypasses this entirely — the wrapper only exists on the
-				// transport this module builds.
-				onFallback: (report: FallbackReport) => {
-					emit({
-						type: "notice",
-						message: `\`${report.from}\` 在产出任何内容之前就失败了（${report.reason}），已改用 \`${report.to}\` 重试。`,
-					});
-				},
-			}),
+		streamFn,
 		toolExecution,
 		// The permission gate. Attached at pi's `beforeToolCall` seam rather
 		// than by wrapping the tools themselves: a wrapper would have to be
