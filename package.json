@@ -26,6 +26,7 @@
 		"typecheck": "node node_modules/@typescript/native-preview/bin/tsgo.js --noEmit -p ./tsconfig.json",
 		"check:tools": "node --import ./scripts/pi-env.mjs node_modules/tsx/dist/cli.mjs --tsconfig ./tsconfig.json scripts/tool-check.ts",
 		"bridge": "node --import ./scripts/pi-env.mjs node_modules/tsx/dist/cli.mjs --tsconfig ./tsconfig.json bridge/server.ts",
+		"bridge:build": "node scripts/build-bridge.mjs",
 		"dev:shell": "node scripts/dev-shell.mjs",
 		"check": "npm run check:vendor && npm run typecheck && npm run smoke && npm run check:tui && npm run check:tools && npm run check:renderer",
 		"vendor:pi": "node scripts/vendor-pi.mjs",

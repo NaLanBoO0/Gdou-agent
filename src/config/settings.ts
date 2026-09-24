@@ -104,6 +104,13 @@ export interface Settings {
 	 * number has to be possible without editing source.
 	 */
 	loopRepeatLimit?: number;
+	/**
+	 * The shell's approval mode: "auto" lets every tool call through without
+	 * asking; any other value routes out-of-workspace `ask` decisions to the
+	 * shell for a human decision. A shell concept, kept in settings so the
+	 * bridge honors it when it builds a session.
+	 */
+	permissionMode?: "normal" | "accept_edits" | "plan" | "auto";
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -153,6 +160,9 @@ export function loadSettings(): Settings {
 	if (typeof input.cwd === "string") settings.cwd = input.cwd;
 	if (typeof input.fallbackModel === "string" && input.fallbackModel.trim().length > 0) {
 		settings.fallbackModel = input.fallbackModel;
+	}
+	if (typeof input.permissionMode === "string" && (["normal", "accept_edits", "plan", "auto"] as string[]).includes(input.permissionMode)) {
+		settings.permissionMode = input.permissionMode as "normal" | "accept_edits" | "plan" | "auto";
 	}
 	// `Number.isInteger` rather than a truthiness check: `0` is meaningful here
 	// (it disables the guard) and would be dropped by the usual `if (input.x)`

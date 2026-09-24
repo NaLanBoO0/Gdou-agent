@@ -565,11 +565,18 @@ function assemble(
 		// that got missed would be the hole. This seam sees every call by
 		// construction, including ones added later.
 		beforeToolCall: async (context) => {
-			const decision = resolveAsk(
-				evaluateToolCall({ toolName: context.toolCall.name, args: context.args }, policy, permissionContext),
-				policy,
-				options.approver,
-			);
+			// The gate asks the user when the call crosses its boundary. With an
+			// approver wired in and an "ask" policy, actually go ask: an `ask`
+			// that points at a live approval channel should not resolve to a
+			// silent deny (that is only for "never"/no-channel).
+			let decision = evaluateToolCall({ toolName: context.toolCall.name, args: context.args }, policy, permissionContext);
+			if (decision.kind === "ask" && options.approver && policy.approval === "ask") {
+				const approved = await options.approver({ toolName: context.toolCall.name, reason: decision.reason });
+				decision = approved
+					? { kind: "allow", stage: decision.stage, reason: decision.reason }
+					: { kind: "deny", stage: decision.stage, reason: `${decision.reason}\n（用户拒绝了本次审批）` };
+			}
+			decision = resolveAsk(decision, policy, options.approver);
 
 			if (decision.kind === "allow") {
 				// Checked after the gate, never before, and that order carries

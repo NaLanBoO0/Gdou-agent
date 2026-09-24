@@ -11,9 +11,12 @@ export const BUILT_IN_SLASH_COMMANDS = [
   { id: "command-edits", name: "edits" },
   { id: "command-auto", name: "auto" },
 ];
+// 与运行时 `src/skills/builtin.ts` 内置集保持一致：只有这里列出的名字
+// 才有真正的技能正文。过多宣告一个没有正文的技能是"界面让它上、内核没实现"，
+// 会变成技能中心的空壳项，所以没实现的必须从这份广告清单里去掉。
 export const BUILT_IN_SKILLS = [
-  "frontend-design", "find-skills", "review-agent", "presentations", "documents",
-  "spreadsheets", "pdf", "imagegen", "visualize", "openai-docs", "skill-creator", "plugin-creator",
+  "frontend-design", "find-skills", "review-agent", "presentations", "documents", "skill-creator",
+  "debug", "testing", "refactor",
 ].map(name => ({ name }));
 export function builtInSlashCommandItems(t: TranslateFn = globalTranslate): SlashMenuItem[] {
   return BUILT_IN_SLASH_COMMANDS.map(command => ({

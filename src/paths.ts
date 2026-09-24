@@ -64,6 +64,18 @@ export function settingsPath(): string {
 }
 
 /**
+ * The workspace registry: projects the user has opened from the shell.
+ *
+ * Each entry maps a workspace id (its real path) to the folder, so `workspace.open`
+ * can list projects in the tree and `session.create` can point a conversation's
+ * working directory at the folder it belongs to. Lives in AGENT_HOME, like
+ * settings, so it survives bridge restarts.
+ */
+export function workspacesPath(): string {
+	return join(AGENT_HOME, "workspaces.json");
+}
+
+/**
  * Where diagnostics land: crash reports, the running log, heap dumps.
  *
  * Kept under AGENT_HOME so a bundled run and a tsx run write to the same place,

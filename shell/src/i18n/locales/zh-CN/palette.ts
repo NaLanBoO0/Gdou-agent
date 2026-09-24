@@ -40,5 +40,8 @@ export const palette = {
     "openai-docs": "查询 OpenAI 产品与 API 的官方资料",
     "skill-creator": "创建或更新可复用的 Agent 技能",
     "plugin-creator": "创建和维护 Gdouwork 插件结构",
+    "debug": "按「先复现 → 二分 → 改前留证」的流程定位并修复运行时问题",
+    "testing": "为改动和修复补齐测试，验证行为并守住回归",
+    "refactor": "不改变外部行为地整理代码结构，逐小步合入",
   },
 };

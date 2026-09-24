@@ -40,5 +40,8 @@ export const palette = {
     "openai-docs": "Look up official OpenAI product and API references",
     "skill-creator": "Create or update reusable agent skills",
     "plugin-creator": "Create and maintain Gdouwork plugin structures",
+    "debug": "Locate and fix runtime problems using reproduce, bisect, and evidence-first",
+    "testing": "Add tests for changes and fixes, verifying behavior and guarding against regressions",
+    "refactor": "Restructure code without changing its external behavior, landing in small steps",
   },
 };

@@ -1,4 +1,3 @@
-import { invoke, listen, IS_TAURI } from "./tauri-shim";
 import type { UnlistenFn } from "./tauri-shim";
 import type { EventEnvelope, JsonRpcResponse, RuntimeEvent } from "../protocol";
 
@@ -34,7 +33,12 @@ export class IpcClient {
   async connect(host: string, port: number): Promise<void> {
     if (this.connected) return;
     if (this.connecting) return this.connecting;
-    this.connecting = IS_TAURI ? this.connectTauri(host, port) : this.connectWebSocket(host, port);
+    // Both browser and Tauri (native webview) talk to the bridge over a direct
+    // WebSocket. The bridge is a plain WS server (127.0.0.1:7438), reachable from
+    // the webview verbatim — no Rust IPC forwarding needed. (An earlier design
+    // routed through `ipc_send`/`gdou:message`; that path is kept out for now,
+    // a direct WebSocket is simpler and reuses the same reconnect logic.)
+    this.connecting = this.connectWebSocket(host, port);
     try {
       await this.connecting;
       this.connected = true;
@@ -64,16 +68,9 @@ export class IpcClient {
       }, REQUEST_TIMEOUT_MS);
       this.pending.set(id, { resolve, reject, timeout });
     });
-    if (IS_TAURI) {
-      try {
-        await invoke("ipc_send", { payload });
-      } catch (error) {
-        this.rejectPending(id, error instanceof Error ? error : new Error(String(error)));
-        this.markDisconnected("与本地服务的连接已中断");
-      }
-    } else {
-      this.socket?.send(payload);
-    }
+    // Send over the direct WebSocket in every mode (browser and Tauri); the
+    // bridge is a plain WS server reachable from the webview verbatim.
+    this.socket?.send(payload);
     return result;
   }
 
@@ -85,14 +82,6 @@ export class IpcClient {
     this.socket?.close();
     this.socket = null;
     this.markDisconnected("客户端已关闭");
-  }
-
-  private async connectTauri(host: string, port: number): Promise<void> {
-    if (!this.unlistenMessage) {
-      this.unlistenMessage = await listen<string>("gdou:message", ({ payload }) => this.receive(payload));
-      this.unlistenDisconnect = await listen<string>("gdou:disconnected", ({ payload }) => this.markDisconnected(payload));
-    }
-    await invoke("ipc_connect", { host, port });
   }
 
   /** Browser mode: replace the Tauri round-trip with a direct WebSocket. */

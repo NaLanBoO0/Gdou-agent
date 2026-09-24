@@ -1,0 +1,33 @@
+[package]
+name = "gdouwork"
+version = "0.1.0"
+description = "Gdouwork desktop shell (Tauri)"
+authors = ["Gdouwork"]
+edition = "2021"
+
+# Tauri 2.x. Keep the app shell thin: it only hosts the webview and manages the
+# bridge process. The shell (Vue) talks to the bridge over a direct WebSocket.
+[lib]
+name = "gdouwork_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri-plugin-dialog = "2"
+tauri-plugin-opener = "2"
+
+[features]
+# tauri's default feature set, kept explicit so additions are visible.
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

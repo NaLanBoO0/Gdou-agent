@@ -38,8 +38,8 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { existsSync, mkdirSync, realpathSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { WebSocketServer, type WebSocket } from "ws";
 import {
 	blocksToText,
@@ -69,8 +69,120 @@ import { deleteTask, dueTasks, getTask, listTasks, updateTaskResult, upsertTask 
 import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
 import type { Skill } from "../src/skills/types.ts";
+import { workspacesPath } from "../src/paths.ts";
 
 const PORT = 7438;
+
+/**
+ * Workspace registry, persisted at ~/.gdou-agent/workspaces.json.
+ *
+ * The kernel has one working directory per session, but the shell is built around
+ * a project tree — opening a folder from the shell must (a) list that folder as a
+ * project, and (b) let a conversation created there run with that folder as its
+ * working directory. `workspace.open` registers the chosen folder here; the id is
+ * the folder's real path, the same scheme the previous single-cwd model used.
+ */
+interface RegisteredWorkspace {
+	id: string;
+	path: string;
+	name: string;
+	pinned: boolean;
+	archived: boolean;
+	addedAt?: string;
+}
+let workspaceCache: Record<string, RegisteredWorkspace> | null = null;
+function loadWorkspaces(): Record<string, RegisteredWorkspace> {
+	if (workspaceCache) return workspaceCache;
+	try {
+		const raw = readFileSync(workspacesPath(), "utf-8");
+		const parsed = JSON.parse(raw) as unknown;
+		workspaceCache = typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+			? (parsed as Record<string, RegisteredWorkspace>)
+			: {};
+	} catch {
+		workspaceCache = {};
+	}
+	return workspaceCache;
+}
+function saveWorkspaces(): void {
+	mkdirSync(dirname(workspacesPath()), { recursive: true });
+	try { writeFileSync(workspacesPath(), `${JSON.stringify(workspaceCache ?? {}, null, 2)}\n`, "utf-8"); } catch { /* best-effort */ }
+}
+/** Folders no longer on disk are dropped from the registry (and thus the tree). */
+function pruneWorkspaces(): void {
+	const reg = loadWorkspaces();
+	let changed = false;
+	for (const id of Object.keys(reg)) {
+		if (!existsSync(reg[id].path)) { delete reg[id]; changed = true; }
+	}
+	if (changed) { workspaceCache = reg; saveWorkspaces(); }
+}
+
+/**
+ * Make sure the bridge's own working directory is a registered workspace.
+ *
+ * Seeded as pinned so the shell shows it near the top, but once in the registry
+ * the user can toggle pin/unpin like any other project — it is no longer forced
+ * permanently pinned (that left the "current" project stuck at the top).
+ */
+function ensureCwdInRegistry(): void {
+	const cwd = process.cwd();
+	const reg = loadWorkspaces();
+	if (!reg[cwd]) {
+		reg[cwd] = { id: cwd, path: cwd, name: basename(cwd) || cwd, pinned: true, archived: false, addedAt: new Date().toISOString() };
+		workspaceCache = reg;
+		saveWorkspaces();
+	}
+}
+
+/**
+ * Resolve a workspace id (a registered project path) to a real directory.
+ *
+ * Narrows the id to a folder that actually exists, so a stale workspace id
+ * falls back to the bridge's own working directory rather than failing loudly.
+ */
+function resolveWorkspaceCwd(workspaceId: unknown): string | undefined {
+	if (typeof workspaceId !== "string") return undefined;
+	const reg = loadWorkspaces();
+	const registered = reg[workspaceId];
+	if (registered && existsSync(registered.path)) return registered.path;
+	if (existsSync(resolve(workspaceId)) && statSync(resolve(workspaceId)).isDirectory()) return resolve(workspaceId);
+	return undefined;
+}
+
+/**
+ * A workspace by id, normalized to the shape workspace.list returns.
+ *
+ * The bridge's own working directory is always present and pinned; everything
+ * else comes from the registry. Returns undefined for an unknown id (a project
+ * that was deleted from the tree or a folder that no longer exists).
+ */
+function knownWorkspace(workspaceId: string): RegisteredWorkspace | undefined {
+	// The bridge's own directory is in the registry too (see ensureCwdInRegistry),
+	// so it can be unpinned/archived like any other project.
+	ensureCwdInRegistry();
+	const reg = loadWorkspaces();
+	const entry = reg[workspaceId];
+	if (entry && existsSync(entry.path)) return entry;
+	return undefined;
+}
+
+/**
+ * Shape a registered workspace as the shell's `Workspace` expects.
+ *
+ * The registry stores the id as `id`; the shell reads it as `workspace_id`.
+ * Returning the raw entry would leave `workspace_id` undefined, so every
+ * update (`toggleProjectPinned` maps by `workspace_id`) would fail to match.
+ */
+function toShellWorkspace(entry: RegisteredWorkspace): Record<string, unknown> {
+	return {
+		workspace_id: entry.id,
+		name: entry.name,
+		path: entry.path,
+		pinned: entry.pinned,
+		archived: entry.archived,
+	};
+}
 
 /** One live conversation, keyed by the session id the shell chose. */
 interface LiveSession {
@@ -260,6 +372,32 @@ function send(socket: WebSocket, message: unknown): void {
 	if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
 }
 
+/** A permission decision the kernel is holding open for the shell to answer. */
+const pendingPermissions = new Map<string, (approved: boolean) => void>();
+
+/** Broadcast a shell-facing event to every connected client. */
+function broadcast(event: Record<string, unknown>): void {
+	for (const client of wss.clients) send(client, { kind: "event", event });
+}
+
+/**
+ * The kernel's approval callback: the permission chain produced an `ask`, so we
+ * surface it to the shell and wait for `permission.respond` to settle it.
+ */
+function makeApprover(): (request: { toolName: string; reason: string }) => Promise<boolean> {
+	return (request) => new Promise<boolean>((resolve) => {
+		const requestId = randomUUID();
+		pendingPermissions.set(requestId, resolve);
+		broadcast({
+			type: "permission.request",
+			request_id: requestId,
+			tool_name: request.toolName,
+			reason: request.reason,
+			ts: new Date().toISOString(),
+		});
+	});
+}
+
 /**
  * One stored session, in the shape the shell's session list expects.
  *
@@ -271,11 +409,17 @@ function snapshotOf(item: SessionSummary): Record<string, unknown> {
 	return {
 		session_id: item.id,
 		title: item.title,
-		status: "active",
+		// 主动态："active" 会让 shell 把归档按钮禁用（busy||active），
+		// 给每条都标 active 等于所有会话都归档不了。空闲/等待输入的会话
+		// 才是多数，这里如实报 waiting_for_input；真正运行中的由 run 事件体现。
+		status: "waiting_for_input",
 		updated_at: item.updatedAt,
-		archived: false,
-		pinned: false,
-		workspace_id: process.cwd(),
+		archived: item.archived === true,
+		pinned: item.pinned === true,
+		// 只有显式归属某个「打开的项目」的会话才归到该项目下。跑在桥默认目录
+		// （进程 cwd，即 src-tauri）的会话，用户没指定项目，记为 null → 归入
+		// shell 的「临时任务」，而不是被塞进 src-tauri 项目。
+		workspace_id: item.cwd && item.cwd !== process.cwd() ? item.cwd : null,
 		expert: item.expert ?? null,
 		latest_run_id: null,
 		total_input_tokens: 0,
@@ -302,7 +446,8 @@ function settingsShape(settings: Settings): Record<string, unknown> {
 		// show what would catch a provider outage, and so the settings page does
 		// not read as "no such thing exists".
 		fallback_model: settings.fallbackModel ?? "",
-		permission_mode: "normal",
+		permission_mode: settings.permissionMode ?? "normal",
+		thinking_level: settings.thinkingLevel ?? "medium",
 		context_window: 128_000,
 		max_output_tokens: 8_192,
 		temperature: null,
@@ -471,7 +616,7 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 		const rebuilt = await buildSession(stored.messages, {
 			mode: stored.profile,
 			expert: stored.expert ?? null,
-		}, undefined, askUserViaBridge);
+		}, undefined, askUserViaBridge, stored.cwd || undefined);
 		live = { session: rebuilt, createdAt: stored.createdAt };
 		sessions.set(sessionId, live);
 	}
@@ -538,13 +683,24 @@ async function buildSession(
 	recipe: { mode?: string; expert?: string | null } = {},
 	permission?: Parameters<typeof createAgent>[0]["permission"],
 	askUser?: Parameters<typeof createAgent>[0]["askUser"],
+	workDir?: string,
 ): Promise<AgentSession> {
-	const cwd = process.cwd();
+	const cwd = workDir ?? process.cwd();
+	// Approval mode: "auto" lets the kernel decide without asking (never); any
+	// manual mode routes out-of-workspace `ask` decisions to the shell.
+	const mode = loadSettings().permissionMode ?? "normal";
+	const resolvedPermission = permission ?? (mode === "auto"
+		? { tier: "danger-full-access", approval: "never" }
+		: { tier: "workspace-write", approval: "ask" });
 	const options: Parameters<typeof createAgent>[0] = {
 		recipe: { mode: recipe.mode ?? "general", expert: recipe.expert },
 		cwd,
 		settings: {},
-		...(permission ? { permission } : {}),
+		// Model intelligence level; pi adapts it per provider.
+		thinkingLevel: loadSettings().thinkingLevel,
+		permission: resolvedPermission,
+		// Wire the shell as the approver whenever the policy may ask.
+		approver: resolvedPermission.approval === "ask" ? makeApprover() : undefined,
 		...(askUser ? { askUser } : {}),
 		...(messages ? { messages } : {}),
 	};
@@ -646,15 +802,7 @@ const NOT_IMPLEMENTED: Record<string, string> = {
 	"change.unstage": "取消暂存尚未实现：在没有审批步骤之前，不提供一键改写工作区的操作。",
 	"change.discard": "丢弃改动尚未实现：这会直接丢弃未提交的工作，目前不提供。",
 	"change.revert": "回滚尚未实现：这会直接改写工作区，目前不提供。",
-	// Workspace management: there is one working directory, chosen at launch.
-	"workspace.open": "切换工作目录尚未实现：当前会话的工作目录在启动时确定。",
-	"workspace.rename": "重命名工作目录尚未实现。",
-	"workspace.delete": "删除工作目录尚未实现。",
-	"workspace.archive": "归档工作区尚未实现。",
-	"workspace.pin": "置顶工作区尚未实现：只有一个工作目录。",
-	"workspace.resume": "恢复工作区尚未实现：只有一个工作目录。",
 	// Interaction channels the kernel does not have.
-	"permission.respond": "权限审批界面尚未接入：目前工具调用按内核的权限策略直接判定。",
 	"session.set_workspace": "切换会话的工作目录尚未实现。",
 };
 
@@ -675,19 +823,122 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 		// ---- boot set: what refreshIndex() calls in parallel at startup ----
 
 		case "workspace.list": {
-			// One workspace: the process working directory. The shell is built
-			// around picking a project; we have a single cwd, and pretending to
-			// host several would invent state nothing here can switch to.
-			const cwd = process.cwd();
-			return reply({
-				workspaces: [{
-					workspace_id: cwd,
-					name: basename(cwd) || cwd,
-					path: cwd,
-					archived: false,
-					pinned: true,
-				}],
-			});
+			// Projects = the bridge's own working directory (pinned) plus every
+			// folder the user has opened via workspace.open. Dropping folders that
+			// no longer exist keeps the tree honest about state the process hosts.
+			ensureCwdInRegistry();
+				pruneWorkspaces();
+				const seen = new Set<string>();
+				const workspaces = [];
+				for (const entry of Object.values(loadWorkspaces())) {
+					if (seen.has(entry.id)) continue;
+					seen.add(entry.id);
+					workspaces.push({
+						workspace_id: entry.id,
+						name: entry.name,
+						path: entry.path,
+						archived: entry.archived,
+						pinned: entry.pinned,
+					});
+				}
+				return reply({ workspaces });
+			}
+
+		case "workspace.open": {
+			// Pick a folder to work in. It becomes a project in the tree, and a
+			// conversation created with that workspace_id runs with this folder as
+			// its working directory (the id is the folder's real path).
+			const raw = params.path as string | undefined;
+			if (!raw || raw.trim().length === 0) return error(-32602, "需要 path");
+			let real: string;
+			try {
+				const target = resolve(raw.trim());
+				if (!existsSync(target)) return error(-32602, `目录不存在：${raw}`);
+				if (!statSync(target).isDirectory()) return error(-32602, `不是目录：${raw}`);
+				real = realpathSync(target);
+			} catch (err) {
+				return error(-32602, (err as Error).message);
+			}
+			const reg = loadWorkspaces();
+			const existing = reg[real];
+			reg[real] = {
+				id: real,
+				path: real,
+				name: existing?.name ?? (basename(real) || real),
+				pinned: false,
+				archived: false,
+				addedAt: existing?.addedAt ?? new Date().toISOString(),
+			};
+			workspaceCache = reg;
+			saveWorkspaces();
+			return reply({ workspace: toShellWorkspace(reg[real]) });
+		}
+
+		case "workspace.pin": {
+			const id = params.workspace_id as string | undefined;
+			if (typeof id !== "string" || !id) return error(-32602, "需要 workspace_id");
+			const reg = loadWorkspaces();
+			ensureCwdInRegistry();
+			const entry = reg[id];
+			if (!entry) return error(-32602, "未知工作区");
+			entry.pinned = params.pinned === true;
+			workspaceCache = reg;
+			saveWorkspaces();
+			return reply({ workspace: toShellWorkspace(entry) });
+		}
+
+		case "workspace.rename": {
+			const id = params.workspace_id as string | undefined;
+			const name = typeof params.name === "string" ? params.name.trim() : "";
+			if (typeof id !== "string" || !id) return error(-32602, "需要 workspace_id");
+			if (!name) return error(-32602, "name 不能为空");
+			const reg = loadWorkspaces();
+			ensureCwdInRegistry();
+			if (!reg[id]) return error(-32602, "未知工作区");
+			reg[id].name = name;
+			workspaceCache = reg;
+			saveWorkspaces();
+			return reply({ workspace: toShellWorkspace(reg[id]) });
+		}
+
+		case "workspace.archive": {
+			const id = params.workspace_id as string | undefined;
+			if (typeof id !== "string" || !id) return error(-32602, "需要 workspace_id");
+			const reg = loadWorkspaces();
+			ensureCwdInRegistry();
+			if (!reg[id]) return error(-32602, "未知工作区");
+			reg[id].archived = true;
+			workspaceCache = reg;
+			saveWorkspaces();
+			return reply({ workspace: toShellWorkspace(reg[id]) });
+		}
+
+		case "workspace.resume": {
+			const id = params.workspace_id as string | undefined;
+			if (typeof id !== "string" || !id) return error(-32602, "需要 workspace_id");
+			const entry = knownWorkspace(id);
+			if (!entry) return error(-32602, "未知工作区");
+			if (entry.archived === false) return reply({ workspace: toShellWorkspace(entry) });
+			const reg = loadWorkspaces();
+			if (!reg[id]) return error(-32602, "未知工作区");
+			reg[id].archived = false;
+			workspaceCache = reg;
+			saveWorkspaces();
+			return reply({ workspace: toShellWorkspace(reg[id]) });
+		}
+
+		case "workspace.delete": {
+			const id = params.workspace_id as string | undefined;
+			if (typeof id !== "string" || !id) return error(-32602, "需要 workspace_id");
+			if (params.confirm !== "delete") return error(-32602, '需要 confirm: "delete"');
+			if (id === process.cwd()) return error(-32602, "不能删除当前工作目录");
+			const reg = loadWorkspaces();
+			if (!reg[id]) return error(-32602, "未知工作区");
+			delete reg[id];
+			workspaceCache = reg;
+			saveWorkspaces();
+			// Deleting a workspace removes it from the tree, not the folder on disk.
+			return reply({});
 		}
 
 		case "session.list":
@@ -817,10 +1068,19 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 				},
 			});
 			question.resolve(text);
-			return reply({ answered: rpcId });
-		}
+				return reply({ answered: rpcId });
+			}
 
-		case "operation.list":
+			case "permission.respond": {
+				const requestId = params.request_id as string | undefined;
+				const resolve = requestId ? pendingPermissions.get(requestId) : undefined;
+				if (!resolve) return error(-32602, "没有这个待审批的请求，或它已处理");
+				pendingPermissions.delete(requestId);
+				resolve(params.decision !== "deny");
+				return reply({});
+			}
+
+			case "operation.list":
 			return reply({ operations: [] });
 
 		// ---- session lifecycle: what the list and the header act on ----
@@ -871,13 +1131,21 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			return reply({});
 		}
 
-		case "session.archive":
-		case "session.pin":
-			// Neither exists on our side: sessions are a flat list on disk with no
-			// archived or pinned flag. Echoing the requested value would make the
-			// badge appear once and vanish on the next refresh, which is worse
-			// than not claiming the feature.
-			return reply({ session: {} });
+		case "session.archive": {
+			const id = params.session_id as string;
+			const stored = loadSession(id);
+			if (!stored) return error(-32602, `unknown session: ${id}`);
+			const saved = saveSession({ ...stored, archived: true });
+			return reply({ session: snapshotOf(saved) });
+		}
+
+		case "session.pin": {
+			const id = params.session_id as string;
+			const stored = loadSession(id);
+			if (!stored) return error(-32602, `unknown session: ${id}`);
+			const saved = saveSession({ ...stored, pinned: params.pinned === true });
+			return reply({ session: snapshotOf(saved) });
+		}
 
 		// ---- files: the inspector's tree and file viewer ----
 
@@ -1123,6 +1391,17 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 				if (trimmed) settings.fallbackModel = trimmed;
 				else delete settings.fallbackModel;
 			}
+			// permission_mode drives whether the shell asks before out-of-workspace
+			// tool calls ("normal") or lets everything through ("auto"). Kept on the
+			// stored settings so buildSession can honor it.
+			if (params.permission_mode === "auto" || params.permission_mode === "accept_edits" || params.permission_mode === "plan" || params.permission_mode === "normal") {
+				settings.permissionMode = params.permission_mode;
+			}
+			// Model intelligence level (thinking effort). pi resolves these per
+			// provider, so persisting here is enough to make the selector work.
+			if (typeof params.thinking_level === "string" && ["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(params.thinking_level)) {
+				settings.thinkingLevel = params.thinking_level as typeof settings.thinkingLevel;
+			}
 			saveSettings(settings);
 			return reply({ settings: settingsShape(settings) });
 		}
@@ -1148,18 +1427,12 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			// so the next message would fail with "unknown session". Seeding the
 			// stored transcript is what makes reopening a conversation work.
 			if (!sessions.has(id)) {
-				const live = { session: await buildSession(stored.messages), createdAt: stored.createdAt };
+				const live = { session: await buildSession(stored.messages, { mode: stored.profile, expert: stored.expert ?? null }, undefined, askUserViaBridge, stored.cwd || undefined), createdAt: stored.createdAt };
 				sessions.set(id, live);
 			}
-			return reply({
-				session: snapshotOf({
-					id: stored.id,
-					profile: stored.profile,
-					title: stored.title,
-					updatedAt: stored.updatedAt,
-					messageCount: stored.messages.length,
-				}),
-			});
+			// 恢复 = 取消归档，快照带回真实 pinned/archived/cwd。
+			const revived = saveSession({ ...stored, archived: false });
+			return reply({ session: snapshotOf(revived) });
 		}
 
 		case "session.steer_message": {
@@ -1360,7 +1633,8 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 		case "session.create": {
 			const sessionId = randomUUID();
 			const expert = typeof params.expert === "string" && params.expert.trim() ? params.expert.trim() : undefined;
-			const session = await buildSession(undefined, { expert }, undefined, askUserViaBridge);
+			// A workspace_id scopes the conversation to a chosen project folder.
+			const session = await buildSession(undefined, { expert }, undefined, askUserViaBridge, resolveWorkspaceCwd(params.workspace_id));
 			const live = { session, createdAt: new Date().toISOString() };
 			sessions.set(sessionId, live);
 			// Persist immediately so an empty task shows up in history even if the

@@ -8,7 +8,7 @@ import SkillIcon from "./SkillIcon.vue";
 import {
   addPluginMarketplace, getPluginCatalog, installCatalogPlugin, installPlugin,
   installSkill, listPlugins, listSkills, refreshPluginMarketplaces,
-  removePluginMarketplace, setPluginEnabled, uninstallPlugin, uninstallSkill,
+  removePluginMarketplace, setPluginEnabled, setSkillEnabled, uninstallPlugin, uninstallSkill,
   type MarketplacePluginSummary, type MarketplaceSummary, type PluginSummary,
   type SkillSummary,
 } from "../../services/gdou-runtime";
@@ -20,6 +20,8 @@ const props = defineProps<{
   connected: boolean;
   workspaceId?: string | null;
   workspaceName?: string | null;
+  /** 进入页面时默认展示的分区；默认技能。 */
+  defaultArea?: Area;
 }>();
 
 const emit = defineEmits<{
@@ -48,7 +50,9 @@ type UnifiedPluginItem = {
   isCatalog?: boolean;
 };
 
-const activeArea = ref<Area>("plugins");
+const activeArea = ref<Area>(props.defaultArea ?? "skills");
+/** 独立入口（技能页 / 插件页）传入 defaultArea 时：隐藏顶部切换条并锁定当前分区，保证页面只展示自身内容。 */
+const locked = computed(() => props.defaultArea !== undefined);
 const activePluginView = ref<PluginView>("installed");
 const rootEl = ref<HTMLElement | null>(null);
 const query = ref("");
@@ -100,6 +104,7 @@ function pluginLabel(skill: SkillSummary): string {
 }
 function showPluginSkills(plugin: PluginSummary): void {
   pluginDetailOpen.value = false;
+  if (locked.value) return; // 独立入口锁定在插件页，不在此页内切到技能
   query.value = "";
   activeSkillSource.value = `${plugin.source === "builtin" ? "builtin" : plugin.source === "personal" ? "user" : "project"}-plugin:${plugin.name}`;
   activeArea.value = "skills";
@@ -400,6 +405,22 @@ async function togglePlugin(plugin: PluginSummary): Promise<void> {
   }
 }
 
+async function toggleSkill(skill: SkillSummary): Promise<void> {
+  updatingSkill.value = skill.id;
+  error.value = "";
+  try {
+    const updated = await setSkillEnabled(skill.id, !skill.enabled, props.workspaceId);
+    // 技能列表来自 skill.list，禁用后会被桥过滤掉；这里原地更新这条，
+    // 让它在来源标签页里仍然可见，否则禁用后就再也无法从 UI 里重新启用。
+    skills.value = skills.value.map((item) => item.id === updated.id ? updated : item);
+    if (selectedSkill.value?.id === updated.id) selectedSkill.value = updated;
+  } catch (reason) {
+    error.value = reason instanceof Error ? reason.message : "技能状态更新失败";
+  } finally {
+    updatingSkill.value = "";
+  }
+}
+
 async function installFromCatalog(plugin: MarketplacePluginSummary): Promise<void> {
   installingCatalogPlugin.value = plugin.id;
   error.value = "";
@@ -532,7 +553,7 @@ async function submitInstall(): Promise<void> {
     else await installPlugin(source, installScope.value, props.workspaceId);
     installDialogOpen.value = false;
     await refreshCatalog();
-    activeArea.value = installKind.value === "skill" ? "skills" : "plugins";
+    if (!locked.value) activeArea.value = installKind.value === "skill" ? "skills" : "plugins";
   } catch (reason) {
     installError.value = reason instanceof Error ? reason.message : t("skills.installFailed");
   } finally {
@@ -541,6 +562,7 @@ async function submitInstall(): Promise<void> {
 }
 
 watch(() => [props.workspaceId, props.connected], () => void refreshCatalog());
+watch(() => props.defaultArea, (value) => { if (value) activeArea.value = value; });
 watch(activeArea, () => { query.value = ""; addMenuOpen.value = false; rootEl.value?.scrollTo({ top: 0 }); });
 
 // 点击外部关闭添加菜单
@@ -562,7 +584,7 @@ onUnmounted(() => {
 <template>
   <section ref="rootEl" class="skill-center" :aria-label="t('skills.sectionAria')">
     <header class="skill-center__topbar">
-      <nav :aria-label="t('skills.navAria')">
+      <nav v-if="!locked" :aria-label="t('skills.navAria')">
         <button :class="{ active: activeArea === 'plugins' }" @click="activeArea = 'plugins'">{{ t("skills.pluginsTab") }}</button>
         <button :class="{ active: activeArea === 'skills' }" @click="activeArea = 'skills'">{{ t("skills.skillsTab") }}</button>
       </nav>
@@ -731,7 +753,7 @@ onUnmounted(() => {
           </button>
           <span class="toggle-label">{{ selectedPlugin.enabled ? t('skills.enabledState') : t('skills.disabledState') }}</span>
           <div class="detail-actions">
-            <button @click="showPluginSkills(selectedPlugin)"><AppIcon name="Sparkles" :size="13" />{{ t('skills.viewPluginSkills', { n: selectedPlugin.skills.length }) }}</button>
+            <button v-if="!locked" @click="showPluginSkills(selectedPlugin)"><AppIcon name="Sparkles" :size="13" />{{ t('skills.viewPluginSkills', { n: selectedPlugin.skills.length }) }}</button>
             <a v-if="safeHomepage(selectedPlugin)" :href="safeHomepage(selectedPlugin)" target="_blank" rel="noopener noreferrer"><AppIcon name="ExternalLink" :size="13" />{{ t('skills.pluginSource') }}</a>
             <button v-if="selectedPlugin.source !== 'builtin'" class="detail-remove" :disabled="updatingPlugin === selectedPlugin.id" @click="removeInstalledPlugin(selectedPlugin); pluginDetailOpen = false"><AppIcon name="Trash2" :size="13" />{{ t('skills.uninstallPlugin') }}</button>
           </div>
@@ -759,6 +781,11 @@ onUnmounted(() => {
           </div>
         </div>
         <footer class="skill-detail-footer">
+          <button class="plugin-toggle detail-toggle" role="switch" :aria-checked="selectedSkill.enabled" :aria-label="selectedSkill.enabled ? '禁用技能' : '启用技能'" :class="{ enabled: selectedSkill.enabled }" :disabled="!connected || updatingSkill === selectedSkill.id" :title="selectedSkill.enabled ? '禁用技能' : '启用技能'" @click="toggleSkill(selectedSkill)">
+            <AppIcon v-if="updatingSkill === selectedSkill.id" name="RefreshCw" :size="13" class="spin" />
+            <span v-else />
+          </button>
+          <span class="toggle-label">{{ selectedSkill.enabled ? t('skills.enabledState') : t('skills.disabledState') }}</span>
           <button type="button" class="skill-use-btn" @click="useSelectedSkill">
             <AppIcon name="MessageCircle" :size="14" />
             在对话中使用

@@ -7,6 +7,7 @@ import { contextSource } from "./utils/contextEvolution";
 import { confirm, message, open as openDialog, invoke, listen, getCurrentWindow, getCurrentWebview, IS_TAURI } from "./lib/tauri-shim";
 import ProjectInspector from "./components/Inspector/ProjectInspector.vue";
 import ModelConfigMenu from "./components/ModelConfig/ModelConfigMenu.vue";
+import ReasoningEffortSlider from "./components/ModelConfig/ReasoningEffortSlider.vue";
 import SessionActions from "./components/session/SessionActions.vue";
 // 暂时隐藏“修改了 N 个文件”提示，保留组件以便后续恢复。
 // import ChangeSummaryRail from "./components/Diff/ChangeSummaryRail.vue";
@@ -15,6 +16,7 @@ import AgentLogo from "./components/timeline/AgentLogo.vue";
 import SessionStatsLine from "./components/timeline/SessionStatsLine.vue";
 import SlashCommandMenu from "./components/CommandPalette/SlashCommandMenu.vue";
 import SkillCenter from "./components/Skills/SkillCenter.vue";
+import ExpertsCenter from "./components/Experts/ExpertsCenter.vue";
 import AutomationPage from "./components/Automation/AutomationPage.vue";
 import PluginIcon from "./components/Skills/PluginIcon.vue";
 import PromptEditor from "./components/Composer/PromptEditor.vue";
@@ -38,15 +40,15 @@ import { canAddImageAttachments, detectVisionSupport, imageProcessingMode } from
 import { recognizeImage, type OcrProgress } from "./utils/ocr";
 import { loadAppearanceSettings, type AppearanceSettings } from "./services/appearance";
 import {
-  archiveSession, cancelRun, connectRuntime, createSession, forkSession, deleteWorkspace, getProviderStatus, getRuntimeConnectionError, getRuntimeSettings, listChanges, listExperts, listOperations, listPendingUserQuestions, listSessions,
-  listWorkspaces, listPlugins, listSkills, moveSession, onRuntimeDisconnect, onRuntimeEvent, openWorkspace, pinWorkspace, readAttachments, renameWorkspace, respondPermission, respondUserQuestion, resumeWorkspace,
+  archiveSession, archiveWorkspace, cancelRun, connectRuntime, createSession, forkSession, deleteWorkspace, getProviderStatus, getRuntimeConnectionError, getRuntimeSettings, listChanges, listExperts, listOperations, listPendingUserQuestions, listSessions,
+  listWorkspaces, listPlugins, listSkills, moveSession, onRuntimeDisconnect, onRuntimeEvent, openWorkspace, pinWorkspace, readAttachments, renameWorkspace, respondApproval, respondPermission, respondUserQuestion, resumeSession, resumeWorkspace,
   revertChanges, sendPrompt, sessionHistory, setRuntimeSettings, steerPrompt, workspaceStatus,
   type Attachment, type DurableOperation, type ExpertSummary, type ImageBlock, type PendingUserQuestion, type ProviderStatus, type RuntimeSettings, type Session, type UserQuestionAnswer, type Workspace, type PluginSummary,
 } from "./services/gdou-runtime";
 
 const { t } = useI18n({ useScope: "global" });
 
-type Page = "work" | "skills" | "automations" | "source-control";
+type Page = "work" | "skills" | "plugins" | "experts" | "automations" | "source-control";
 type AppMenu = "file" | "edit" | "view" | "help";
 type RuntimeEvent = Record<string, unknown>;
 type ProjectDialogTone = "neutral" | "success" | "danger";
@@ -421,9 +423,13 @@ const launcherPlugins = ref<PluginSummary[]>([]);
 const insertedPlugins = ref<PluginSummary[]>([]);
 const selectedSkill = ref<{ name: string } | null>(null);
 const launcherPermissionMenuOpen = ref(false);
+const activePermissionMenuOpen = ref(false);
+const thinkingMenuOpen = ref(false);
 const permissionConfirmOpen = ref(false);
 const permissionSaving = ref(false);
 const permissionSettingsError = ref("");
+const pendingApproval = ref<{ requestId: string; toolName: string; reason: string } | null>(null);
+const approvalSending = ref(false);
 // 防止连续按键在 steer 请求尚未返回时重复追加同一条消息。
 const steering = ref(false);
 const projectActionsOpen = ref<string | null>(null);
@@ -453,6 +459,7 @@ function toggleProjectCollapsed(item: Workspace) {
   try { localStorage.setItem("gdou.collapsedProjects", JSON.stringify([...next])); } catch { /* 忽略存储配额错误 */ }
 }
 const projectPreviewId = ref<string | null>(null);
+const projectMenuFlip = ref(false);
 const projectPreviewStyle = ref<Record<string, string>>({});
 let projectPreviewCloseTimer: number | undefined;
 const projectEditingId = ref<string | null>(null);
@@ -570,7 +577,9 @@ const allProjects = computed(() => activeWorkspaces.value
     const candidates = normalizedTaskQuery.value && !projectMatches ? visibleSessions.value : liveSessions.value;
     return { ...item, tasks: candidates.filter((task) => task.workspace_id === item.workspace_id && (item.pinned || !task.pinned)).slice(0, 6), projectMatches };
   })
-  .filter((item) => !normalizedTaskQuery.value || item.projectMatches || item.tasks.length));
+  .filter((item) => !normalizedTaskQuery.value || item.projectMatches || item.tasks.length)
+  // 置顶的项目排在最前面，让「置顶/取消置顶」有肉眼可见的效果。
+  .sort((left, right) => Number(right.pinned) - Number(left.pinned)));
 const previewProject = computed(() => allProjects.value.find((item) => item.workspace_id === projectPreviewId.value) ?? null);
 
 function showProjectPreview(item: Workspace, event: MouseEvent | FocusEvent) {
@@ -612,11 +621,16 @@ function handleProjectPreviewFocusOut(event: FocusEvent) {
   }
   scheduleProjectPreviewClose();
 }
-function openProjectActions(item: Workspace) {
+function openProjectActions(item: Workspace, event?: MouseEvent) {
   keepProjectPreviewOpen();
   projectPreviewId.value = null;
   sessionPreview.value = null;
   projectActionsOpen.value = item.workspace_id;
+  // 用点击位置的 clientY 直接预判，不等 DOM 挂载：若菜单(约 340px)会溢出视口
+  // 底部就向上展开。这是最稳的方式，不再依赖 rAF 测量时序。
+  const MENU_HEIGHT = 340;
+  const clientY = typeof event?.clientY === "number" ? event.clientY : 0;
+  projectMenuFlip.value = clientY + MENU_HEIGHT > window.innerHeight - 8;
 }
 function handleProjectRowPointerDown(item: Workspace, event: PointerEvent) {
   if (event.button !== 0) return;
@@ -624,6 +638,8 @@ function handleProjectRowPointerDown(item: Workspace, event: PointerEvent) {
   if (target?.closest(".project-action-menu")) return;
   if (target?.closest(".project-row-caret")) return;
   if (target?.closest(".project-row-toggle")) return;
+  // 点项目主体只负责展开/折叠，不主动建会话——否则一点项目就把当前对话顶掉。
+  // 建新会话走显式的「打开项目 / 新建任务」，不在这条不设防的入口上触发。
   toggleProjectCollapsed(item);
 }
 const pinnedProjects = computed(() => allProjects.value.filter((item) => item.pinned));
@@ -664,6 +680,34 @@ const permissionModeLabel = computed(() => ({
   accept_edits: t("app.permissionMode.acceptEdits"),
   auto: t("app.permissionMode.auto"),
 }[runtimeSettings.value?.permission_mode ?? "normal"]));
+const permissionOptions = [
+  { key: "normal", label: "app.permissionMode.normal", hint: "app.permissionModeHint.normal" },
+  { key: "plan", label: "app.permissionMode.plan", hint: "app.permissionModeHint.plan" },
+  { key: "accept_edits", label: "app.permissionMode.acceptEdits", hint: "app.permissionModeHint.acceptEdits" },
+  { key: "auto", label: "app.permissionMode.auto", hint: "app.permissionModeHint.auto" },
+] as const;
+/** 会话智能程度档位，复用模型管理里思考强度的滑块动画。 */
+const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+const composerThinking = ref<RuntimeSettings["thinking_level"]>("medium");
+watch(() => runtimeSettings.value?.thinking_level, (value) => { if (value) composerThinking.value = value; });
+const thinkingLevelLabel = computed(() => {
+  const current = runtimeSettings.value?.thinking_level ?? "medium";
+  const found = thinkingLevels.includes(current as (typeof thinkingLevels)[number]);
+  return found ? t(`app.thinkingShort.${current}`) : t(`app.thinkingShort.medium`);
+});
+function toggleThinkingMenu() {
+  thinkingMenuOpen.value = !thinkingMenuOpen.value;
+  launcherPermissionMenuOpen.value = false;
+  activePermissionMenuOpen.value = false;
+}
+async function applyThinkingLevel(value: RuntimeSettings["thinking_level"]) {
+  try {
+    const result = await setRuntimeSettings({ thinking_level: value });
+    if (result) runtimeSettings.value = result;
+  } catch (error) {
+    await showProjectNotice("设置失败", error instanceof Error ? error.message : String(error), "danger");
+  }
+}
 // 状态语义与后端一致：active=会话进行中（含新建未跑完一轮）、waiting_for_input=等待用户输入、closed=已完成
 const taskStatusLabel = (item: Session) => item.status === "active" ? t("app.taskStatus.active") : item.status === "waiting_for_input" ? t("app.taskStatus.waitingInput") : t("app.taskStatus.done");
 function formatSessionUsage(item: Session): string {
@@ -1344,6 +1388,16 @@ function applyRuntimeEvent(event: RuntimeEvent) {
   const type = String(event.type ?? "");
   const runId = String(event.run_id ?? "");
   const relatedRunId = String(event.parent_run_id ?? runId);
+  // The runtime asked the user to approve an out-of-workspace tool call.
+  if (type === "permission.request") {
+    const payload = event as Record<string, unknown>;
+    pendingApproval.value = {
+      requestId: String(payload.request_id ?? ""),
+      toolName: String(payload.tool_name ?? ""),
+      reason: String(payload.reason ?? ""),
+    };
+    return;
+  }
   if (type === "session.created" || type === "session.closed" || type === "session.waiting_for_input") {
     void refreshIndex();
     return;
@@ -1873,7 +1927,7 @@ async function submitUserQuestion(pending: PendingUserQuestion, answers: UserQue
   }
 }
 
-function beginTask(project: Workspace | null = workspace.value) {
+function beginTask(project: Workspace | null = null) {
   indexSelectionInitialized = true;
   if (!activeId.value) saveComposerDraft(workspace.value?.workspace_id ?? null, prompt.value);
   window.clearTimeout(projectPreviewCloseTimer);
@@ -1889,6 +1943,43 @@ function beginTask(project: Workspace | null = workspace.value) {
   page.value = "work";
   prompt.value = loadComposerDraft(project?.workspace_id ?? null);
   void nextTick(() => launcherPrompt.value?.focus());
+}
+
+/**
+ * 打开/新建一个项目的会话。与 beginTask 的区别：这里会**立即**在建会话里落一条
+ * 空会话并选中它，让「打开项目后项目中就有新对话」成立——不会只停在输入框、
+ * 要等第一条消息才真正建。
+ *
+ * 注意：**不会清掉活动会话**。该项目已有一条进行中会话就只切过去，桥不可用时
+ * 才退回 beginTask（空白输入框）。绝不因为点了一下项目就把当前对话顶掉。
+ */
+async function startProjectConversation(item: Workspace) {
+  workspace.value = item;
+  const alreadyInThisProject = !!activeId.value &&
+    active.value?.workspace_id === item.workspace_id && active.value?.status !== "closed";
+  if (alreadyInThisProject) return; // 已在看这个项目：不打断
+  if (!connected.value) {
+    beginTask(item);
+    return;
+  }
+  try {
+    const created = await createSession(item, selectedExpert.value);
+    const sessionId = created.session_id;
+    // 必须先插进 sessions.value：active 是 sessions.find(...)，会话不在列表里
+    // activeId 就匹配不到，UI 仍会停在启动页等第一条消息。
+    insertProvisionalSession(sessionId, "", item);
+    const view = ensureSessionView(sessionId);
+    view.timeline = new Map();
+    view.loaded = true;
+    activeId.value = sessionId;
+    page.value = "work";
+    if (created.expert) {
+      sessions.value = sessions.value.map((entry) => entry.session_id === sessionId ? { ...entry, expert: created.expert } : entry);
+    }
+    await refreshIndex(false);
+  } catch {
+    beginTask(item);
+  }
 }
 function insertProvisionalSession(sessionId: string, title: string, project: Workspace | null) {
   const now = new Date().toISOString();
@@ -2130,7 +2221,7 @@ function consumeSessionHash() {
 }
 async function createProjectTask(item: Workspace) {
   projectActionsOpen.value = null;
-  beginTask(item);
+  await startProjectConversation(item);
 }
 async function showProjectFiles(item: Workspace) {
   projectActionsOpen.value = null;
@@ -2177,8 +2268,12 @@ async function deleteProject(item: Workspace) {
 async function resumeProject(item: Workspace) {
   projectActionsOpen.value = null;
   const resumed = await resumeWorkspace(item.workspace_id);
+  // 恢复项目 = 把该项目下已归档的对话一并恢复。
+  const chats = sessions.value.filter((s) => s.workspace_id === item.workspace_id && s.archived);
+  if (chats.length) await Promise.all(chats.map((s) => resumeSession(s.session_id)));
   workspaces.value = workspaces.value.map((entry) => entry.workspace_id === resumed.workspace_id ? resumed : entry);
   workspace.value = resumed;
+  await refreshIndex(false);
 }
 function handleSessionClosed(sessionId: string) {
   if (sessionId === activeId.value) closeActiveSession();
@@ -2406,6 +2501,27 @@ async function removeProject(item: Workspace) {
   }
   finally { projectActionBusy.value = false; }
 }
+// 归档项目：项目移入底部「已归档项目」，其名下未归档的对话一起归档，
+// 否则这些对话会变成"无归属"散落到「临时任务」。
+async function archiveProject(item: Workspace) {
+  if (projectActionBusy.value) return;
+  projectActionsOpen.value = null;
+  const accepted = await confirmProjectAction(t("app.archiveProject"), t("app.archiveProjectConfirm", { name: item.name }), t("app.archiveProjectConfirmLabel"));
+  if (!accepted) return;
+  projectActionBusy.value = true;
+  try {
+    const updated = await archiveWorkspace(item.workspace_id);
+    const chats = sessions.value.filter((s) => s.workspace_id === item.workspace_id && !s.archived);
+    if (chats.length) await Promise.all(chats.map((s) => archiveSession(s.session_id)));
+    workspaces.value = workspaces.value.map((entry) => entry.workspace_id === updated.workspace_id ? updated : entry);
+    await refreshIndex(false);
+    await showProjectNotice(t("app.archiveProjectDone"), t("app.archiveProjectMoved"), "success");
+  } catch (error) {
+    await refreshIndex(false);
+    await showProjectNotice(t("app.archiveFailed"), error instanceof Error ? error.message : String(error), "danger");
+  }
+  finally { projectActionBusy.value = false; }
+}
 // 撤销：回滚该 run 的全部文件改动，再清除时间线中的变更卡片
 async function handleReverted(runId: string) {
   const wsId = activeWorkspace.value?.workspace_id;
@@ -2502,9 +2618,14 @@ async function openLocalProject() {
   closeLauncherMenus();
   const selected = await openDialog({ directory: true, multiple: false, title: t("app.openLocalProjectTitle") });
   if (typeof selected !== "string") return;
-  workspace.value = await openWorkspace(selected);
-  await refreshIndex(false);
-  beginTask(workspace.value);
+  try {
+    workspace.value = await openWorkspace(selected);
+    await refreshIndex(false);
+    await startProjectConversation(workspace.value);
+  } catch (reason) {
+    // 打开失败要让用户看到原因，而不是"选完文件夹没反应"。
+    void showProjectNotice("打开项目失败", reason instanceof Error ? reason.message : String(reason), "danger");
+  }
 }
 function closeLauncherMenus() {
   launcherProjectMenuOpen.value = false;
@@ -2565,14 +2686,22 @@ const launcherPluginIcons = computed(() => {
 });
 function toggleLauncherPermissionMenu() {
   launcherPermissionMenuOpen.value = !launcherPermissionMenuOpen.value;
+  activePermissionMenuOpen.value = false;
   launcherProjectMenuOpen.value = false;
   permissionSettingsError.value = "";
 }
-function chooseLauncherWorkspace(item: Workspace) {
+function toggleActivePermissionMenu() {
+  activePermissionMenuOpen.value = !activePermissionMenuOpen.value;
+  launcherPermissionMenuOpen.value = false;
+}
+async function chooseLauncherWorkspace(item: Workspace) {
   indexSelectionInitialized = true;
   workspace.value = item;
   closeLauncherMenus();
   launcherProjectQuery.value = "";
+  // 从启动页下拉选中一个项目 = 打开该项目，也应在该项目里建新对话，
+  // 而不是只切工作区、停在输入框等第一条消息。
+  await startProjectConversation(item);
 }
 function clearLauncherWorkspace() {
   indexSelectionInitialized = true;
@@ -2586,7 +2715,7 @@ async function createLocalWorkspace() {
   if (typeof selected !== "string") return;
   workspace.value = await openWorkspace(selected);
   await refreshIndex(false);
-  beginTask(workspace.value);
+  await startProjectConversation(workspace.value);
 }
 function removeAttachment(index: number) { attachedFiles.value = attachedFiles.value.filter((_, i) => i !== index); }
 function formatAttachmentBytes(bytes: number): string {
@@ -2955,6 +3084,7 @@ async function applyPermissionMode(value: RuntimeSettings["permission_mode"]) {
     const result = await setRuntimeSettings({ permission_mode: value });
     if (result) runtimeSettings.value = result;
     launcherPermissionMenuOpen.value = false;
+    activePermissionMenuOpen.value = false;
   } catch (error) {
     permissionSettingsError.value = friendlyError(error).message;
   } finally {
@@ -2964,10 +3094,27 @@ async function applyPermissionMode(value: RuntimeSettings["permission_mode"]) {
 async function choosePermissionMode(value: RuntimeSettings["permission_mode"]) {
   if (value === "auto" && runtimeSettings.value?.permission_mode !== "auto") {
     launcherPermissionMenuOpen.value = false;
+    activePermissionMenuOpen.value = false;
     permissionConfirmOpen.value = true;
     return;
   }
   await applyPermissionMode(value);
+}
+
+async function answerApproval(approved: boolean) {
+  const pending = pendingApproval.value;
+  if (!pending || approvalSending.value) return;
+  approvalSending.value = true;
+  try {
+    await respondApproval(pending.requestId, approved);
+    pendingApproval.value = null;
+  } catch (error) {
+    if (pendingApproval.value?.requestId === pending.requestId) {
+      await showProjectNotice("审批失败", error instanceof Error ? error.message : String(error), "danger");
+    }
+  } finally {
+    approvalSending.value = false;
+  }
 }
 async function confirmFullAccess() {
   await applyPermissionMode("auto");
@@ -2998,6 +3145,11 @@ function toggleExpertMenu() {
 function chooseExpert(id: string | null) {
   selectedExpert.value = id;
   expertMenuOpen.value = false;
+}
+function useExpertInChat(id: string) {
+  selectedExpert.value = id;
+  expertMenuOpen.value = false;
+  openPage("work");
 }
 function closeExpertMenuOnOutside(event: PointerEvent) {
   const target = event.target as Node | null;
@@ -3290,6 +3442,8 @@ function handleDocumentPointerDown(event: PointerEvent) {
   if (!target?.closest(".launcher-project-control")) launcherProjectMenuOpen.value = false;
   if (!target?.closest(".launcher-plugin-control, .active-plugin-control")) { launcherPluginMenuOpen.value = false; activePluginMenuOpen.value = false; }
   if (!target?.closest(".launcher-permission-control")) launcherPermissionMenuOpen.value = false;
+  if (!target?.closest(".active-permission-control")) activePermissionMenuOpen.value = false;
+  if (!target?.closest(".thinking-control")) thinkingMenuOpen.value = false;
   if (!target?.closest(".expert-picker")) expertMenuOpen.value = false;
   if (!target?.closest(".mode-switch-wrap")) modeMenuOpen.value = false;
 }
@@ -3601,6 +3755,8 @@ watch(activeWorkspace, (project) => {
       <nav class="sidebar-tools" :aria-label="t('app.workbenchTools')">
         <button :class="{ active: page === 'automations' }" @click="openPage('automations')"><AppIcon name="CalendarClock" :size="18" /><span>{{ t('app.automations') }}</span></button>
         <button :class="{ active: page === 'skills' }" @click="openPage('skills')"><AppIcon name="Puzzle" :size="18" /><span>{{ t('app.skills') }}</span></button>
+        <button :class="{ active: page === 'plugins' }" @click="openPage('plugins')"><AppIcon name="Plug" :size="18" /><span>{{ t('app.plugins') }}</span></button>
+        <button :class="{ active: page === 'experts' }" @click="openPage('experts')"><AppIcon name="Brain" :size="18" /><span>{{ t('app.experts') }}</span></button>
       </nav>
 
       <div class="sidebar-workspace">
@@ -3622,7 +3778,7 @@ watch(activeWorkspace, (project) => {
           </div>
           <span class="side-label side-label--action project-tree-label"><span>{{ t('app.projects') }}</span><button :title="t('app.openLocalDir')" :aria-label="t('app.openLocalDir')" @click="openLocalProject"><AppIcon name="FolderOpen" :size="16" /></button></span>
           <div v-for="item in allProjects" :key="item.workspace_id" class="project-group" :class="{ 'project-group--pinned': item.pinned }">
-            <div class="project-row-shell" @pointerdown="handleProjectRowPointerDown(item, $event)" @mouseenter="showProjectPreview(item, $event)" @mouseleave="scheduleProjectPreviewClose" @focusin="showProjectPreview(item, $event)" @focusout="handleProjectPreviewFocusOut" @contextmenu.prevent.stop="openProjectActions(item)">
+            <div class="project-row-shell" @pointerdown="handleProjectRowPointerDown(item, $event)" @mouseenter="showProjectPreview(item, $event)" @mouseleave="scheduleProjectPreviewClose" @focusin="showProjectPreview(item, $event)" @focusout="handleProjectPreviewFocusOut" @contextmenu.prevent.stop="openProjectActions(item, $event)">
               <button
                 class="project-row-caret"
                 type="button"
@@ -3634,16 +3790,18 @@ watch(activeWorkspace, (project) => {
                 <AppIcon :name="isProjectCollapsed(item) ? 'Folder' : 'FolderOpen'" :size="16" />
               </button>
               <button class="project-row-toggle" type="button" :aria-expanded="!isProjectCollapsed(item)" @click.stop="toggleProjectCollapsed(item)">
+                <AppIcon v-if="item.pinned" name="Pin" :size="12" class="project-pin-badge" />
                 <span>{{ item.name }}</span>
               </button>
-              <div v-if="projectActionsOpen === item.workspace_id" class="project-action-menu" role="menu" :aria-label="t('app.projectActionsAria', { name: item.name })">
+              <div v-if="projectActionsOpen === item.workspace_id" class="project-action-menu" :class="{ 'project-action-menu--up': projectMenuFlip }" role="menu" :aria-label="t('app.projectActionsAria', { name: item.name })">
                 <button role="menuitem" :disabled="projectActionBusy" @click="toggleProjectPinned(item)"><AppIcon v-if="item.pinned" name="PinOff" :size="16" /><AppIcon v-else name="Pin" :size="16" />{{ item.pinned ? t('app.unpin') : t('app.pin') }}</button>
                 <button role="menuitem" @click="beginProjectEdit(item)"><AppIcon name="Pencil" :size="16" />{{ t('app.edit') }}</button>
                 <div class="project-action-menu__separator" />
                 <button role="menuitem" @click="openProjectExplorer(item)"><AppIcon name="FolderOpen" :size="16" />{{ t('app.openInExplorer') }}</button>
                 <button role="menuitem" :disabled="projectActionBusy" @click="createProjectWorktree(item)"><AppIcon name="GitBranch" :size="16" />{{ t('app.createWorktree') }}</button>
+                <button role="menuitem" :disabled="projectActionBusy" @click="archiveProject(item)"><AppIcon name="Archive" :size="16" />{{ t('app.archiveProject') }}</button>
                 <div class="project-action-menu__separator" />
-                <button role="menuitem" :disabled="projectActionBusy" @click="archiveProjectChats(item)"><AppIcon name="Archive" :size="16" />{{ t('app.archiveChats') }}</button>
+                <button role="menuitem" :disabled="projectActionBusy" @click="archiveProjectChats(item)"><AppIcon name="Inbox" :size="16" />{{ t('app.archiveChats') }}</button>
                 <button role="menuitem" :disabled="projectActionBusy" @click="removeProject(item)"><AppIcon name="Unlink" :size="16" />{{ t('app.removeProject') }}</button>
               </div>
             </div>
@@ -3828,7 +3986,7 @@ watch(activeWorkspace, (project) => {
                           <AppIcon name="Upload" :size="32" />
                           <span>{{ t('app.dropFilesHere') }}</span>
                         </div>
-                        <div class="composer-toolbar"><button type="button" class="round" :title="t('app.addContext')" :aria-label="t('app.addContext')" @click="selectAttachments"><AppIcon name="Plus" :size="18" /></button><div class="active-plugin-control"><button type="button" class="composer-plugin pill" :title="t('app.plugins')" :aria-label="t('app.plugins')" aria-haspopup="menu" :aria-expanded="activePluginMenuOpen" @click.stop="toggleActivePluginMenu"><span v-if="launcherPluginIcons.length" class="composer-plugin-icons"><PluginIcon v-for="p in launcherPluginIcons" :key="p.id" :name="p.name" :size="18" /></span><AppIcon v-else name="Puzzle" :size="15" /></button><div v-if="activePluginMenuOpen" class="launcher-popover plugin-picker-popover" role="menu" aria-label="选择插件"><div v-if="launcherPlugins.length" class="plugin-picker-list"><button v-for="p in launcherPlugins" :key="p.id" type="button" role="menuitem" @click="insertPluginToPrompt(p)"><PluginIcon :name="p.name" :size="22" /><span><b>{{ p.display_name }}</b><small>{{ p.description }}</small></span></button></div><p v-else class="project-picker-empty">暂无已启用的插件</p></div></div><button type="button" class="permission" :title="permissionModeLabel" :class="runtimeSettings?.permission_mode === 'auto' ? 'permission--full-access' : 'permission--per-item'" @click="choosePermissionMode(runtimeSettings?.permission_mode === 'auto' ? 'normal' : 'auto')"><AppIcon name="ShieldCheck" :size="15" />{{ runtimeSettings?.permission_mode === 'auto' ? t('app.allowAll') : t('app.perItemApproval') }}<AppIcon name="ChevronDown" :size="13" /></button><span /><div v-if="experts.length" class="expert-picker"><button type="button" class="expert-trigger" :class="{ active: expertMenuOpen || selectedExpert }" :title="t('app.expertHint')" :aria-label="t('app.expertAria')" aria-haspopup="menu" :aria-expanded="expertMenuOpen" @click.stop="toggleExpertMenu"><AppIcon name="Brain" :size="14" /><span>{{ selectedExpertName ?? t('app.expertNone') }}</span><AppIcon name="ChevronDown" :size="12" /></button><div v-if="expertMenuOpen" class="launcher-popover expert-popover" role="menu" :aria-label="t('app.expertAria')"><button type="button" role="menuitemradio" :aria-checked="!selectedExpert" @click="chooseExpert(null)"><AppIcon name="Ban" :size="15" /><span><b>{{ t('app.expertNone') }}</b><small>{{ t('app.expertNoneHint') }}</small></span><AppIcon v-if="!selectedExpert" name="Check" :size="14" /></button><button v-for="item in experts" :key="item.id" type="button" role="menuitemradio" :aria-checked="selectedExpert === item.id" @click="chooseExpert(item.id)"><AppIcon name="Brain" :size="15" /><span><b>{{ item.name }}</b><small>{{ item.description }}</small></span><AppIcon v-if="selectedExpert === item.id" name="Check" :size="14" /></button></div></div><ModelConfigMenu :settings="runtimeSettings" :status="providerStatus" @updated="handleModelConfigUpdated" @manage="openModelManager" /><button v-if="isRunActive" class="send stop" type="button" :title="t('app.stopTaskNow')" :aria-label="t('app.stopTask')" @click="stopActiveRun"><AppIcon name="Square" :size="14" /></button><button v-if="!isRunActive || prompt.trim() || selectedSkill" class="send" type="submit" :title="isRunActive ? t('app.sendAppend') : t('app.sendTask')" :aria-label="isRunActive ? t('app.sendAppend') : t('app.sendTask')" :disabled="!prompt.trim() && !selectedSkill || active.archived || active.status === 'closed' || (sending && !isAppending) || steering"><AppIcon name="ArrowUp" :size="15" /></button></div>
+                        <div class="composer-toolbar"><button type="button" class="round" :title="t('app.addContext')" :aria-label="t('app.addContext')" @click="selectAttachments"><AppIcon name="Plus" :size="18" /></button><div class="active-plugin-control"><button type="button" class="composer-plugin pill" :title="t('app.plugins')" :aria-label="t('app.plugins')" aria-haspopup="menu" :aria-expanded="activePluginMenuOpen" @click.stop="toggleActivePluginMenu"><span v-if="launcherPluginIcons.length" class="composer-plugin-icons"><PluginIcon v-for="p in launcherPluginIcons" :key="p.id" :name="p.name" :size="18" /></span><AppIcon v-else name="Puzzle" :size="15" /></button><div v-if="activePluginMenuOpen" class="launcher-popover plugin-picker-popover" role="menu" aria-label="选择插件"><div v-if="launcherPlugins.length" class="plugin-picker-list"><button v-for="p in launcherPlugins" :key="p.id" type="button" role="menuitem" @click="insertPluginToPrompt(p)"><PluginIcon :name="p.name" :size="22" /><span><b>{{ p.display_name }}</b><small>{{ p.description }}</small></span></button></div><p v-else class="project-picker-empty">暂无已启用的插件</p></div></div><div class="active-permission-control"><button type="button" class="permission" :class="runtimeSettings?.permission_mode === 'auto' ? 'permission--full-access' : 'permission--per-item'" aria-haspopup="menu" :aria-expanded="activePermissionMenuOpen" @click.stop="toggleActivePermissionMenu"><AppIcon name="ShieldCheck" :size="15" />{{ permissionModeLabel }}<AppIcon name="ChevronDown" :size="13" /></button><div v-if="activePermissionMenuOpen" class="launcher-popover permission-popover" role="menu" :aria-label="t('app.permissionModeAria')"><button v-for="opt in permissionOptions" :key="opt.key" type="button" role="menuitemradio" :aria-checked="(runtimeSettings?.permission_mode ?? 'normal') === opt.key" class="permission-option-row" @click="choosePermissionMode(opt.key)"><span><b>{{ t(opt.label) }}</b><small>{{ t(opt.hint) }}</small></span><AppIcon v-if="(runtimeSettings?.permission_mode ?? 'normal') === opt.key" name="Check" :size="15" /></button></div></div><span /><div v-if="experts.length" class="expert-picker"><button type="button" class="expert-trigger" :class="{ active: expertMenuOpen || selectedExpert }" :title="t('app.expertHint')" :aria-label="t('app.expertAria')" aria-haspopup="menu" :aria-expanded="expertMenuOpen" @click.stop="toggleExpertMenu"><AppIcon name="Brain" :size="14" /><span>{{ selectedExpertName ?? t('app.expertNone') }}</span><AppIcon name="ChevronDown" :size="12" /></button><div v-if="expertMenuOpen" class="launcher-popover expert-popover" role="menu" :aria-label="t('app.expertAria')"><button type="button" role="menuitemradio" :aria-checked="!selectedExpert" @click="chooseExpert(null)"><AppIcon name="Ban" :size="15" /><span><b>{{ t('app.expertNone') }}</b><small>{{ t('app.expertNoneHint') }}</small></span><AppIcon v-if="!selectedExpert" name="Check" :size="14" /></button><button v-for="item in experts" :key="item.id" type="button" role="menuitemradio" :aria-checked="selectedExpert === item.id" @click="chooseExpert(item.id)"><AppIcon name="Brain" :size="15" /><span><b>{{ item.name }}</b><small>{{ item.description }}</small></span><AppIcon v-if="selectedExpert === item.id" name="Check" :size="14" /></button></div></div><div class="thinking-control"><button type="button" class="thinking" :title="thinkingLevelLabel" :aria-label="t('app.thinkingAria')" :aria-expanded="thinkingMenuOpen" @click.stop="toggleThinkingMenu"><AppIcon name="Sparkles" :size="15" />{{ thinkingLevelLabel }}<AppIcon name="ChevronDown" :size="12" /></button><div v-if="thinkingMenuOpen" class="launcher-popover thinking-popover" :aria-label="t('app.thinkingAria')" @click.stop><ReasoningEffortSlider v-model="composerThinking" :levels="thinkingLevels" :i18n-prefix="'app.thinking'" compact @change="applyThinkingLevel" /></div></div><ModelConfigMenu :settings="runtimeSettings" :status="providerStatus" @updated="handleModelConfigUpdated" @manage="openModelManager" /><button v-if="isRunActive" class="send stop" type="button" :title="t('app.stopTaskNow')" :aria-label="t('app.stopTask')" @click="stopActiveRun"><AppIcon name="Square" :size="14" /></button><button v-if="!isRunActive || prompt.trim() || selectedSkill" class="send" type="submit" :title="isRunActive ? t('app.sendAppend') : t('app.sendTask')" :aria-label="isRunActive ? t('app.sendAppend') : t('app.sendTask')" :disabled="!prompt.trim() && !selectedSkill || active.archived || active.status === 'closed' || (sending && !isAppending) || steering"><AppIcon name="ArrowUp" :size="15" /></button></div>
                       </div>
                     </form>
                 </QueueDock>
@@ -3879,13 +4037,13 @@ watch(activeWorkspace, (project) => {
                   <div class="launcher-permission-control">
                     <button type="button" class="permission" :title="permissionModeLabel" :class="runtimeSettings?.permission_mode === 'auto' ? 'permission--full-access' : 'permission--per-item'" aria-haspopup="menu" :aria-expanded="launcherPermissionMenuOpen" @click.stop="toggleLauncherPermissionMenu"><AppIcon name="ShieldCheck" :size="15" />{{ permissionModeLabel }}<AppIcon name="ChevronDown" :size="13" /></button>
                     <div v-if="launcherPermissionMenuOpen" class="launcher-popover permission-popover" role="menu" :aria-label="t('app.permissionModeAria')">
-                      <button type="button" class="full-access-row" role="menuitemcheckbox" :aria-checked="runtimeSettings?.permission_mode === 'auto'" @click="choosePermissionMode(runtimeSettings?.permission_mode === 'auto' ? 'normal' : 'auto')"><span><b>{{ t('app.allowAllPermissions') }}</b><small>{{ t('app.skipConfirmations') }}</small></span><i :class="{ active: runtimeSettings?.permission_mode === 'auto' }"><em /></i></button>
+                      <button v-for="opt in permissionOptions" :key="opt.key" type="button" role="menuitemradio" :aria-checked="(runtimeSettings?.permission_mode ?? 'normal') === opt.key" class="permission-option-row" @click="choosePermissionMode(opt.key)"><span><b>{{ t(opt.label) }}</b><small>{{ t(opt.hint) }}</small></span><AppIcon v-if="(runtimeSettings?.permission_mode ?? 'normal') === opt.key" name="Check" :size="15" /></button>
                       <p v-if="permissionSettingsError" class="launcher-menu-error">{{ permissionSettingsError }}</p>
                     </div>
                   </div>
                   <span />
                   <div v-if="experts.length" class="expert-picker"><button type="button" class="expert-trigger" :class="{ active: expertMenuOpen || selectedExpert }" :title="t('app.expertHint')" :aria-label="t('app.expertAria')" aria-haspopup="menu" :aria-expanded="expertMenuOpen" @click.stop="toggleExpertMenu"><AppIcon name="Brain" :size="14" /><span>{{ selectedExpertName ?? t('app.expertNone') }}</span><AppIcon name="ChevronDown" :size="12" /></button><div v-if="expertMenuOpen" class="launcher-popover expert-popover" role="menu" :aria-label="t('app.expertAria')"><button type="button" role="menuitemradio" :aria-checked="!selectedExpert" @click="chooseExpert(null)"><AppIcon name="Ban" :size="15" /><span><b>{{ t('app.expertNone') }}</b><small>{{ t('app.expertNoneHint') }}</small></span><AppIcon v-if="!selectedExpert" name="Check" :size="14" /></button><button v-for="item in experts" :key="item.id" type="button" role="menuitemradio" :aria-checked="selectedExpert === item.id" @click="chooseExpert(item.id)"><AppIcon name="Brain" :size="15" /><span><b>{{ item.name }}</b><small>{{ item.description }}</small></span><AppIcon v-if="selectedExpert === item.id" name="Check" :size="14" /></button></div></div>
-                  <ModelConfigMenu :settings="runtimeSettings" :status="providerStatus" @updated="handleModelConfigUpdated" @manage="openModelManager" />
+                  <div class="thinking-control"><button type="button" class="thinking" :title="thinkingLevelLabel" :aria-label="t('app.thinkingAria')" :aria-expanded="thinkingMenuOpen" @click.stop="toggleThinkingMenu"><AppIcon name="Sparkles" :size="15" />{{ thinkingLevelLabel }}<AppIcon name="ChevronDown" :size="12" /></button><div v-if="thinkingMenuOpen" class="launcher-popover thinking-popover" :aria-label="t('app.thinkingAria')" @click.stop><ReasoningEffortSlider v-model="composerThinking" :levels="thinkingLevels" :i18n-prefix="'app.thinking'" compact @change="applyThinkingLevel" /></div></div><ModelConfigMenu :settings="runtimeSettings" :status="providerStatus" @updated="handleModelConfigUpdated" @manage="openModelManager" />
                   <button v-if="isRunActive" class="send stop" type="button" :title="t('app.stopTask')" :aria-label="t('app.stopTask')" @click="stopActiveRun"><AppIcon name="Square" :size="14" /></button><button v-else class="send" type="submit" :aria-label="t('app.sendTask')" :disabled="!connected || !prompt.trim() && !selectedSkill"><AppIcon name="ArrowUp" :size="15" /></button>
                 </div>
               </div>
@@ -3932,7 +4090,11 @@ watch(activeWorkspace, (project) => {
 
       <section v-if="page === 'automations'" class="chat-main"><AutomationPage :connected="connected" :workspace-id="activeWorkspace?.workspace_id ?? null" /></section>
 
-      <section v-if="page === 'skills'" class="chat-main"><SkillCenter :connected="connected" :workspace-id="activeWorkspace?.workspace_id ?? null" :workspace-name="activeWorkspace?.name ?? null" @use-in-chat="useSkillInChat" /></section>
+      <section v-if="page === 'skills'" class="chat-main"><SkillCenter :connected="connected" :workspace-id="activeWorkspace?.workspace_id ?? null" :workspace-name="activeWorkspace?.name ?? null" default-area="skills" @use-in-chat="useSkillInChat" /></section>
+
+      <section v-if="page === 'plugins'" class="chat-main"><SkillCenter :connected="connected" :workspace-id="activeWorkspace?.workspace_id ?? null" :workspace-name="activeWorkspace?.name ?? null" default-area="plugins" @use-in-chat="useSkillInChat" /></section>
+
+      <section v-if="page === 'experts'" class="chat-main"><ExpertsCenter :experts="experts" @use-expert="useExpertInChat" /></section>
 
     </main>
 
@@ -3961,6 +4123,22 @@ watch(activeWorkspace, (project) => {
           </section>
         </template>
       </SettingsDialog>
+
+      <div v-if="pendingApproval" class="permission-confirm-backdrop permission-approved-backdrop" role="presentation">
+        <section class="skill-dialog permission-approved-dialog" role="alertdialog" aria-modal="true" aria-labelledby="approval-title" aria-describedby="approval-desc">
+          <header><div><h2 id="approval-title">需要你的批准</h2></div>
+            <button type="button" :aria-label="t('app.close')" :disabled="approvalSending" @click="answerApproval(false)"><AppIcon name="X" :size="17" /></button>
+          </header>
+          <div class="permission-approved-body">
+            <p id="approval-desc">Agent 想调用工具 <code>{{ pendingApproval.toolName }}</code>。这是工作目录之外的操作，需要你点头才执行。</p>
+            <p class="permission-approved-reason">{{ pendingApproval.reason }}</p>
+          </div>
+          <footer>
+            <button type="button" :disabled="approvalSending" @click="answerApproval(false)">拒绝</button>
+            <button type="button" class="primary" :disabled="approvalSending" @click="answerApproval(true)">{{ approvalSending ? "提交中…" : "允许" }}</button>
+          </footer>
+        </section>
+      </div>
 
       <div v-if="projectBeingEdited" class="project-edit-backdrop" role="presentation" @mousedown.self="closeProjectEdit">
         <form class="project-edit-dialog" role="dialog" aria-modal="true" aria-labelledby="project-edit-title" @submit.prevent="saveProjectEdit" @keydown.esc.prevent="closeProjectEdit">

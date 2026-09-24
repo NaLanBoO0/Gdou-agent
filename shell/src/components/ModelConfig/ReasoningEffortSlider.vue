@@ -2,22 +2,26 @@
 import AppIcon from "../icons/AppIcon.vue";
 import { computed, ref, watch, useId } from "vue";
 import { useI18n } from "vue-i18n";
-import type { RuntimeSettings } from "../../services/gdou-runtime";
 
-type Effort = RuntimeSettings["reasoning_effort"];
-const props = defineProps<{ modelValue: Effort; disabled?: boolean; compact?: boolean; modelName?: string; statusText?: string }>();
-const emit = defineEmits<{ "update:modelValue": [value: Effort]; change: [value: Effort] }>();
+const props = defineProps<{ modelValue: string; disabled?: boolean; compact?: boolean; modelName?: string; statusText?: string; levels?: readonly string[]; i18nPrefix?: string }>();
+const emit = defineEmits<{ "update:modelValue": [value: string]; change: [value: string] }>();
 const { t } = useI18n({ useScope: "global" });
 const id = useId();
-const levels = ["", "low", "medium", "high", "xhigh", "max"] as const;
-const palettes = [
+/** 档位列表。默认是模型思考强度档位；可传入自定义档位（如会话智能程度）复用同一套滑块动画。 */
+const levels = props.levels ?? (["", "low", "medium", "high", "xhigh", "max"] as const);
+/** i18n 前缀，需提供 <prefix>Label / Short / SaveStatus / Next / Reset / Hint 等键。 */
+const prefix = props.i18nPrefix ?? "model.reasoning";
+const p = (key: string) => t(`${prefix}${key}`);
+const LEVEL_PALETTES = [
   { color: "#7c8797", gradient: "linear-gradient(110deg, #98a4b5, #c2cbd8)" },
   { color: "#159eaa", gradient: "linear-gradient(110deg, #16a6b6, #67dccb)" },
   { color: "#3498ff", gradient: "linear-gradient(110deg, #287bea, #48bbff)" },
   { color: "#6261ed", gradient: "linear-gradient(110deg, #3268ed, #8470fa, #aaa0ff)" },
   { color: "#9059f5", gradient: "linear-gradient(110deg, #4a48e8, #955af5, #cb97ff)" },
   { color: "#a451ff", gradient: "linear-gradient(110deg, #2245d8, #754dff 45%, #ba79ff 72%, #7145f8)" },
+  { color: "#b23bff", gradient: "linear-gradient(110deg, #5a16d8, #8d3df7 45%, #cf7aff 72%, #9a3df8)" },
 ];
+const palettes = LEVEL_PALETTES.slice(0, Math.min(levels.length, LEVEL_PALETTES.length));
 const stars = Array.from({ length: 18 }, (_, index) => ({
   left: ((index * 37 + 7) % 96) + "%",
   top: ((index * 23 + 17) % 78 + 11) + "%",
@@ -30,7 +34,7 @@ const livePaletteIndex = computed(() => Math.min(levels.length - 1, Math.round(l
 const liveEffort = computed(() => levels[livePaletteIndex.value] || "default");
 watch(() => props.modelValue, value => { if (!dragging.value) livePosition.value = Math.max(0, levels.indexOf(value)); });
 const dragging = ref(false);
-const label = computed(() => t(`model.reasoning.${levels[livePaletteIndex.value] || "default"}`));
+const label = computed(() => t(`${prefix}.${levels[livePaletteIndex.value] || "default"}`));
 function snapPosition() {
   const index = Math.max(0, Math.min(levels.length - 1, Math.round(livePosition.value)));
   livePosition.value = index;
@@ -38,7 +42,7 @@ function snapPosition() {
   emit("change", levels[index]);
   dragging.value = false;
 }
-function choose(value: Effort) {
+function choose(value: string) {
   if (props.disabled) return;
   livePosition.value = Math.max(0, levels.indexOf(value));
   emit("update:modelValue", value);
@@ -65,15 +69,15 @@ function update(event: Event, commit = false) {
   <div class="reasoning-slider" :data-effort="liveEffort" :style="{ '--reasoning-blue': palettes[livePaletteIndex].color }" :class="{ 'reasoning-slider--compact': compact, 'reasoning-slider--disabled': disabled }">
     <div class="reasoning-slider-card">
       <div class="reasoning-slider-heading">
-        <span v-if="compact" class="reasoning-slider-caption">{{ t("model.reasoningLabel") }}</span>
-        <span v-if="compact" class="reasoning-slider-status" role="status" :aria-label="t('model.reasoningSaveStatus')">{{ statusText }}</span>
-        <button type="button" class="reasoning-slider-level" :disabled="disabled" :aria-label="t('model.reasoningNext')"
+        <span v-if="compact" class="reasoning-slider-caption">{{ p("Label") }}</span>
+        <span v-if="compact" class="reasoning-slider-status" role="status" :aria-label="p('SaveStatus')">{{ statusText }}</span>
+        <button type="button" class="reasoning-slider-level" :disabled="disabled" :aria-label="p('Next')"
           @click="choose(levels[(position + 1) % levels.length])">
-          <Transition name="reasoning-label" mode="out-in"><span :key="modelValue">{{ t(`model.reasoningShort.${modelValue || 'default'}`) }}</span></Transition><AppIcon name="ChevronRight" :size="16" />
+          <Transition name="reasoning-label" mode="out-in"><span :key="liveEffort">{{ t(`${prefix}Short.${liveEffort}`) }}</span></Transition><AppIcon name="ChevronRight" :size="16" />
         </button>
-        <button type="button" class="reasoning-slider-reset" :disabled="disabled || !modelValue" :title="t('model.reasoningReset')"
-          :aria-label="t('model.reasoningReset')" @click="choose('')"><AppIcon name="RotateCcw" :size="20" /></button>
-        <p v-if="!compact" class="reasoning-slider-model" :title="modelName">{{ modelName || t("model.reasoningLabel") }}</p>
+        <button type="button" class="reasoning-slider-reset" :disabled="disabled || !modelValue" :title="p('Reset')"
+          :aria-label="p('Reset')" @click="choose(levels[0])"><AppIcon name="RotateCcw" :size="20" /></button>
+        <p v-if="!compact" class="reasoning-slider-model" :title="modelName">{{ modelName || p("Label") }}</p>
       </div>
       <div class="reasoning-slider-track" :style="{ '--reasoning-progress': `calc(${compact ? 16 : 22}px + (100% - ${compact ? 32 : 44}px) * ${position / (levels.length - 1)})` }">
         <div class="reasoning-slider-rail" aria-hidden="true">
@@ -89,12 +93,12 @@ function update(event: Event, commit = false) {
           <i v-for="(level, index) in levels" :key="level" :class="{ filled: index < position }" />
         </div>
         <input :id="id" class="reasoning-slider-input" type="range" min="0" :max="levels.length - 1" step="0.01"
-          :value="position" :disabled="disabled" :aria-label="t('model.reasoningLabel')" :aria-valuetext="label"
+          :value="position" :disabled="disabled" :aria-label="p('Label')" :aria-valuetext="label"
           :aria-describedby="compact ? undefined : `${id}-hint`"
           @input="update($event)" @change="update($event, true)" @keydown="keyboard" />
       </div>
     </div>
-    <p v-if="!compact" :id="`${id}-hint`" class="reasoning-slider-hint">{{ t("model.reasoningHint") }}</p>
+    <p v-if="!compact" :id="`${id}-hint`" class="reasoning-slider-hint">{{ p("Hint") }}</p>
   </div>
 </template>
 

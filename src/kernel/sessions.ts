@@ -57,6 +57,19 @@ export interface SessionSummary {
 	title: string;
 	updatedAt: string;
 	messageCount: number;
+	/** Pinned / archived flags, persisted like expert (absent = default when missing). */
+	pinned?: boolean;
+	archived?: boolean;
+	/**
+	 * Working directory this conversation runs in, expressed as a workspace id.
+	 *
+	 * Optional and read leniently for the same reason as `expert`: an older file
+	 * simply lacks it, in which case the session is attributed to the bridge's
+	 * own working directory. The shell renders SUMMARIES directly from the first
+	 * line, so without this a conversation opened in a chosen project would
+	 * never appear under that project in the sidebar.
+	 */
+	cwd?: string;
 }
 
 export interface StoredSession extends SessionSummary {
@@ -156,6 +169,9 @@ function parseSummary(raw: string): SessionSummary | undefined {
 		messageCount: typeof record.messageCount === "number" ? record.messageCount : 0,
 	};
 	if (typeof record.expert === "string") summary.expert = record.expert;
+	if (typeof record.cwd === "string" && record.cwd.length > 0) summary.cwd = record.cwd;
+	if (typeof record.pinned === "boolean") summary.pinned = record.pinned;
+	if (typeof record.archived === "boolean") summary.archived = record.archived;
 	return summary;
 }
 
@@ -235,6 +251,8 @@ export function loadSession(id: string): StoredSession | undefined {
 		messages: record.messages,
 	};
 	if (typeof record.expert === "string") loaded.expert = record.expert;
+	if (typeof record.pinned === "boolean") loaded.pinned = record.pinned;
+	if (typeof record.archived === "boolean") loaded.archived = record.archived;
 	return loaded;
 }
 
@@ -272,6 +290,8 @@ export function saveSession(session: SessionDraft): StoredSession {
 	// Only set when present, so a session with no expert keeps its file free of
 	// a null that later readers would have to interpret.
 	if (session.expert !== undefined) record.expert = session.expert;
+	if (session.pinned !== undefined) record.pinned = session.pinned;
+	if (session.archived !== undefined) record.archived = session.archived;
 
 	// Summary first, so listing never has to read the rest.
 	const summary: SessionSummary = {
@@ -280,8 +300,11 @@ export function saveSession(session: SessionDraft): StoredSession {
 		title: record.title,
 		updatedAt: record.updatedAt,
 		messageCount: record.messageCount,
+		cwd: record.cwd,
 	};
 	if (record.expert !== undefined) summary.expert = record.expert;
+	if (record.pinned !== undefined) summary.pinned = record.pinned;
+	if (record.archived !== undefined) summary.archived = record.archived;
 
 	const temp = `${path}.tmp`;
 	writeFileSync(temp, `${JSON.stringify(summary)}\n${JSON.stringify(record)}\n`, "utf-8");
@@ -316,8 +339,11 @@ export function renameSession(id: string, title: string): SessionSummary | undef
 		title: saved.title,
 		updatedAt: saved.updatedAt,
 		messageCount: saved.messageCount,
+		cwd: saved.cwd,
 	};
 	if (saved.expert !== undefined) summary.expert = saved.expert;
+	if (saved.pinned !== undefined) summary.pinned = saved.pinned;
+	if (saved.archived !== undefined) summary.archived = saved.archived;
 	return summary;
 }
 

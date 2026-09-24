@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --app-bg: #f8f5ef;
   --surface: #ffffff;
   --surface-soft: #f5f1ea;
@@ -440,6 +440,9 @@
 
 :root[data-app-theme="dark"] .brand-mode-popover small { color: var(--text-muted) !important; }
 :root[data-app-theme="dark"] .brand-mode-popover button svg { color: var(--text) !important; }
+:root[data-app-theme="dark"] .expert-popover b { color: var(--text) !important; }
+:root[data-app-theme="dark"] .expert-popover small { color: var(--text-muted) !important; }
+:root[data-app-theme="dark"] .expert-popover > button[aria-checked="true"] { background: color-mix(in srgb, #7c3aed 16%, transparent) !important; border-color: color-mix(in srgb, #7c3aed 40%, transparent) !important; }
 :root[data-app-theme="dark"] .brand-mode-trigger:hover { background: var(--surface-raised) !important; }
 :root[data-app-theme="dark"] .brand-mode-trigger svg { color: var(--text-muted) !important; }
 :root[data-app-theme="dark"] .brand-mode-trigger[aria-expanded="true"] svg { color: var(--text) !important; }

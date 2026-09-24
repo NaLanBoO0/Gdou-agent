@@ -114,7 +114,7 @@ export type ModelRequestSettings = {
   temperature: number | null; top_p: number | null; reasoning_effort: "" | "low" | "medium" | "high" | "xhigh" | "max";
   timeout_s: number; max_retries: number; cache_control: boolean; supports_vision: boolean;
 };
-export type RuntimeSettings = ModelRequestSettings & { provider: "anthropic" | "openai"; model: string; permission_mode: "normal" | "accept_edits" | "plan" | "auto"; base_url?: string; experimental_jev?: boolean; jev_model?: string; jev_confidence_threshold?: number; jev_api_key_configured?: boolean; fallback_model?: string };
+export type RuntimeSettings = ModelRequestSettings & { provider: "anthropic" | "openai"; model: string; permission_mode: "normal" | "accept_edits" | "plan" | "auto"; thinking_level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; base_url?: string; experimental_jev?: boolean; jev_model?: string; jev_confidence_threshold?: number; jev_api_key_configured?: boolean; fallback_model?: string };
 export type RuntimeSettingsUpdate = Partial<Omit<RuntimeSettings, "jev_api_key_configured">> & { api_key?: string; jev_api_key?: string };
 export type ExpertSummary = {
   id: string; name: string; description: string;
@@ -610,6 +610,11 @@ export async function respondPermission(
     run_id: runId,
     session_id: sessionId,
   });
+}
+
+/** Answer an approval `permission.request` the runtime holds open. */
+export async function respondApproval(requestId: string, approved: boolean): Promise<void> {
+  await client.request("permission.respond", { request_id: requestId, decision: approved ? "allow" : "deny" });
 }
 export async function listArtifacts(workspaceId: string): Promise<Artifact[]> { const result = await client.request("artifact.list", { workspace_id: workspaceId }); return (result.artifacts as Artifact[] | undefined) ?? []; }
 export async function listOperations(taskId?: string): Promise<DurableOperation[]> { const result = await client.request("operation.list", taskId ? { task_id: taskId } : {}); return (result.operations as DurableOperation[] | undefined) ?? []; }
