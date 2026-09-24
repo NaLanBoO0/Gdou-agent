@@ -73,7 +73,9 @@ import { workspacesPath } from "../src/paths.ts";
 import { PROJECT_ROOT, AGENT_HOME } from "../src/paths.ts";
 import { provisionManagedBinaries } from "../src/kernel/toolchain.ts";
 
-const PORT = 7438;
+/** Listen port. Overridable so a second instance can run beside a live one
+ *  (used by tests); the shell hardcodes 7438, so only the bridge reads this. */
+const PORT = Number(process.env.GDOU_BRIDGE_PORT ?? 7438);
 
 /**
  * Workspace registry, persisted at ~/.gdou-agent/workspaces.json.
@@ -385,7 +387,10 @@ function accumulateUsage(
 	usage.output += num(u.output ?? u.output_tokens);
 	usage.cacheRead += num(u.cacheRead ?? u.cache_read_input_tokens);
 	usage.cacheWrite += num(u.cacheWrite ?? u.cache_creation_input_tokens);
-	usage.cost += num(u.cost);
+	// pi 的 Usage.cost 是对象 { input, output, cacheRead, cacheWrite, total }，
+	// 直接 Number() 会得 NaN；取 total 才是 provider 报告的总费用。
+	const cost = u.cost as { total?: unknown } | undefined;
+	usage.cost += num(cost?.total);
 }
 
 /** Ledger of token usage, appended one JSON object per finished run. */
@@ -466,6 +471,23 @@ function usageOverview(): {
 			byModel.set(model, m);
 		}
 	} catch { /* aggregate what we can; corruption falls back to empty. */ }
+	// Conversations that predate the ledger never touch it; recover their totals
+	// from the persisted transcripts so the overview is not silently missing
+	// every run made before usage tracking existed.
+	for (const item of listSessions()) {
+		const used = storedSessionUsage(item.id);
+		if (!used) continue;
+		const day = new Date(item.updatedAt).toLocaleDateString("sv-SE");
+		const d = byDay.get(day) ?? { runs: 0, input: 0, output: 0, cost: 0 };
+		d.input += used.input; d.output += used.output;
+		byDay.set(day, d);
+		const model = used.model;
+		const m = byModel.get(model) ?? { runs: 0, input: 0, output: 0, cost: 0 };
+		m.input += used.input; m.output += used.output;
+		byModel.set(model, m);
+		total.input += used.input;
+		total.output += used.output;
+	}
 	return {
 		total,
 		byDay: [...byDay.entries()].map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date)).reverse(),
@@ -505,6 +527,32 @@ function usageTotalsBySession(): Map<string, { input: number; output: number; el
 		}
 	} catch { /* best-effort: a corrupt ledger falls back to zeros. */ }
 	return totals;
+}
+
+/**
+ * Token totals summed from a stored transcript's assistant messages.
+ *
+ * The ledger only records runs that finished after the ledger existed; older
+ * conversations predate it. pi persists real usage on every assistant message,
+ * so those totals can be recovered directly from the transcript. Returns
+ * undefined when the session has no usable usage, so callers keep showing "—".
+ */
+function storedSessionUsage(sessionId: string): { input: number; output: number; elapsedMs: number; model: string } | undefined {
+	try {
+		const stored = loadSession(sessionId);
+		if (!stored) return undefined;
+		let input = 0, output = 0;
+		for (const message of stored.messages) {
+			if (message.role !== "assistant") continue;
+			const usage = (message as { usage?: unknown }).usage as { input?: unknown; output?: unknown } | undefined;
+			if (!usage || typeof usage !== "object") continue;
+			const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+			input += num(usage.input);
+			output += num(usage.output);
+		}
+		if (input === 0 && output === 0) return undefined;
+		return { input, output, elapsedMs: 0, model: typeof stored.model === "string" ? stored.model : "" };
+	} catch { return undefined; }
 }
 
 /** A permission decision the kernel is holding open for the shell to answer. */
@@ -1109,7 +1157,9 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 
 		case "session.list": {
 			const totals = usageTotalsBySession();
-			return reply({ sessions: listSessions().map((item) => snapshotOf(item, totals.get(item.id))) });
+			return reply({
+				sessions: listSessions().map((item) => snapshotOf(item, totals.get(item.id) ?? storedSessionUsage(item.id))),
+			});
 		}
 
 		case "stats.overview":
@@ -1269,19 +1319,54 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			// an implementation detail of how the agent was built, and showing it
 			// as the first "assistant" turn would read as the agent introducing
 			// itself with its own instructions.
-			return reply({
-				messages: stored.messages
-					.filter((message) => message.role !== "system" && "content" in message)
-					.map((message) => ({
+			//
+			// Token usage: pi persists each assistant message with its provider
+			// usage, so history can report the same numbers a live run would —
+			// the shell's SessionStatsLine keys stats by run id, so every
+			// assistant message gets a stable synthetic run id (the provider's
+			// response id when available) and run_stats is keyed by it. The
+			// 0s the shell used to show were the honest truth of an empty map,
+			// not of the conversation.
+			const run_stats: Record<string, { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; elapsed_s: number; context_pct: number }> = {};
+			let assistantIndex = 0;
+			const messages = stored.messages
+				.filter((message) => message.role !== "system" && "content" in message)
+				.map((message) => {
+					const isAssistant = message.role === "assistant";
+					const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+					if (isAssistant) {
+						const usage = (message as { usage?: unknown }).usage as { input?: unknown; output?: unknown; cacheRead?: unknown } | undefined;
+						const runId = String((message as { responseId?: unknown }).responseId ?? `history-${++assistantIndex}`);
+						if (usage && typeof usage === "object") {
+							run_stats[runId] = {
+								input_tokens: num(usage.input),
+								output_tokens: num(usage.output),
+								cache_read_input_tokens: num(usage.cacheRead),
+								elapsed_s: 0,
+								context_pct: 0,
+							};
+						}
+						return {
+							role: "assistant",
+							content: blocksToText(message.content),
+							ts: stored.updatedAt,
+							model: stored.model,
+							run_id: runId,
+						};
+					}
+					return {
 						role: message.role === "user" ? "user" : "assistant",
 						content: blocksToText(message.content),
 						ts: stored.updatedAt,
 						model: stored.model,
-					})),
-				// The expert that shaped this conversation, so a reopened session shows
-				// the same "为什么工具变少了" indicator it had when it was created.
+					};
+				});
+			// The expert that shaped this conversation, so a reopened session shows
+			// the same "为什么工具变少了" indicator it had when it was created.
+			return reply({
+				messages,
 				expert: stored.expert ?? null,
-				run_stats: {},
+				run_stats,
 				context_injections: [],
 			});
 		}

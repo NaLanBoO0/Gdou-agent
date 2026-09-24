@@ -1622,6 +1622,13 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
   总览卡片（运行次数/输入/输出/缓存读取/耗时/费用）与「按模型」「按日期」两张明细表。
 - **任务板/悬停累计**：`session.list` 从 ledger 按 sessionId 求和，`snapshotOf` 据此
   报真实的 `total_input_tokens/output/elapsed_s` —— 任务板 token 列与悬停预览不再全是 0。
+- **历史回填**：ledger 只记录它诞生之后的 run。旧对话此前全是 0，原因是双重的：
+  `get_history` 的 `run_stats` 是空对象、消息也不带 run_id。pi 持久化的每条 assistant
+  消息自带真实 `usage`，据此：
+  - `get_history` 按 assistant 消息重建 run_stats（run_id 用 provider 的 responseId），
+    会话详情的统计行显示真实数字；
+  - `session.list` 与 `stats.overview` 对无 ledger 记录的旧会话回退到从 transcript 求和；
+  - 顺带修掉 `usage.cost` 解析 bug——pi 的 cost 是对象 `{...total}`，原先都读成 0。
 
 ---
 
