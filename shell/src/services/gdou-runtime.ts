@@ -304,6 +304,26 @@ export async function getUsageOverview(): Promise<UsageOverview> {
   };
 }
 
+export type MemoryCategory = "profile" | "preference" | "project" | "fact";
+export type MemoryEntry = {
+  key: string; value: string; category: MemoryCategory;
+  source: "summary" | "manual"; updatedAt: string;
+};
+
+export async function getMemoryEntries(): Promise<MemoryEntry[]> {
+  const result = await client.request("memory.list", {});
+  return (result.entries as MemoryEntry[] | undefined) ?? [];
+}
+
+export async function updateMemoryEntry(key: string, value: string, category: MemoryCategory): Promise<MemoryEntry> {
+  const result = await client.request("memory.update", { key, value, category });
+  return result.entry as MemoryEntry;
+}
+
+export async function deleteMemoryEntry(key: string): Promise<void> {
+  await client.request("memory.delete", { key });
+}
+
 export async function listMcpServers(): Promise<McpServerSummary[]> {
   const result = await client.request("mcp.list", {});
   return (result.servers as McpServerSummary[] | undefined) ?? [];

@@ -118,6 +118,15 @@ export { AGENT_HOME, describePiSource, IS_BUNDLED, PROJECT_ROOT, VENDOR_PI_DIR }
 // Tools (for reuse in custom profiles)
 export { currentTimeTool } from "./tools/time.ts";
 export { saveNoteTool, listNotesTool } from "./tools/notes.ts";
+export {
+	deleteMemory,
+	loadMemory,
+	memoryPromptBlock,
+	memorySnapshot,
+	upsertMemory,
+	type MemoryCategory,
+	type MemoryEntry,
+} from "./memory/memory.ts";
 
 // Front-ends
 export { canRunTui, runTui, type RunTuiOptions } from "./tui/index.ts";

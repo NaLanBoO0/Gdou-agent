@@ -97,6 +97,7 @@
 | 51 | **自动化（定时任务）** | `src/automation/schedule.ts`、`bridge/server.ts` | 配方 + 提示词 + 触发时机；运行时触发（桥进程存活期间）；产出单独概念不混入历史；无人值守默认 read-only（见 2.46） |
 | 52 | **提问机制（ask_user）** | `src/tools/ask-user.ts`、`kernel/agent.ts`、`bridge/server.ts` | 模型调用 `ask_user` 向用户提出结构化问题；run 挂起等回答；shell 弹多选/多选弹窗（见 2.47） |
 | 53 | **用量统计** | `bridge/server.ts`、`shell/`（用量页） | 每次 run 结束后把真实 token 用量追加写入 `~/.gdou-agent/usage.ndjson`（input/output/cache/cost/耗时）；`stats.overview` 聚合总览 + 按天 + 按模型；shell 用量页展示卡片与明细表（见 2.48） |
+| 54 | **用户记忆系统** | `src/memory/memory.ts`、`kernel/agent.ts`、`bridge/server.ts`、`shell/`（记忆页） | 对话结束后自动提炼关于用户的事实写入 `~/.gdou-agent/memory.json`，新会话启动时注入系统提示，跨对话记住称呼/语言/偏好/项目；记忆页可查看、编辑、删除、手动添加（见 2.49） |
 
 ---
 
@@ -1637,6 +1638,25 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
   那是真实对象而非空——`??` 不会 fallthrough 到 transcript。改为 ledger 全 0 时也回退
   transcript，最新会话的列表/悬停不再显示 0。
 
+### 2.49 用户记忆系统
+
+「记住用户信息、跨对话依然记得」。内核原有的 `save_note`/`list_notes` 是**手动**记事本
+（模型主动存），本轮加的是**自动**记忆：
+
+- **存储**：`src/memory/memory.ts`，`~/.gdou-agent/memory.json`，条目
+  `{ key, value, category, source, updatedAt }`，原子写，同 key 覆盖。
+- **自动提炼**：每次 run 结束后异步 `summarizeMemory`（不阻塞回复），把本轮对话喂给模型，
+  要求输出 JSON 数组（key/value/category），去重后 upsert。只在有真实凭据、本轮有用户消息、
+  文本足够时触发；失败静默，绝不打断已完成的一轮。
+- **记忆注入**：`kernel/agent.ts` 装配时读 memory，`composePrompt` 追加
+  「## User memory」段落，所以**每个新会话的模型一开场就知道已记住的事实**，
+  CLI / 桥 / 自动化统一受益。
+- **管理界面**：shell 侧栏「记忆」页——查看/编辑/删除/手动添加，按分类过滤；
+  桥端 `memory.list` / `memory.update` / `memory.delete`。
+- **实测闭环**（2026-09-24）：对话「我叫 Nala，用中文，在做 gdou-agent 项目」→
+  自动提炼出 `user_name=Nala`（profile）、`user_language=中文`（preference）、
+  `project_gdou_agent=…`（project）；新会话 system prompt 注入上述事实。
+
 ---
 
 ## 3. 刻意不做的事
@@ -1823,6 +1843,8 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
   实测通过（模型提问 → shell 弹窗 → 回答 → 模型继续）
 - **用量统计**（2026-09-24）：`usage.ndjson` 落盘 + `stats.overview` 聚合 + shell 用量页
   （总览卡片 + 按模型/按日期明细）；会话统计行的 token 是真实数字不再是 0
+- **用户记忆系统**（2026-09-24）：自动提炼 + 注入 + 记忆页管理，跨对话记住用户信息，
+  实测闭环通过
 
 **未验证**：
 

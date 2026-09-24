@@ -57,6 +57,7 @@ export const app = {
   skills: "Skills",
   experts: "Experts",
   usage: "Usage",
+  memory: "Memory",
   expertsSectionAria: "Experts",
   expertsTitle: "Experts",
   expertsSubtitle: "Experts preset behavior and workflow for specific roles and tasks",

@@ -65,6 +65,7 @@ import { installSkill, loadSkills, uninstallSkill } from "../src/skills/registry
 import { listExperts } from "../src/experts/registry.ts";
 import { approveMcpServer, approvedMcpServers, loadMcpConfig } from "../src/index.ts";
 import { askUserTool, type AskUserQuestion } from "../src/index.ts";
+import { deleteMemory, loadMemory, upsertMemory } from "../src/index.ts";
 import { deleteTask, dueTasks, getTask, listTasks, updateTaskResult, upsertTask } from "../src/automation/schedule.ts";
 import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
@@ -878,6 +879,10 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 			cost: usage.cost,
 			elapsedMs: Date.now() - runStartedAt,
 		});
+		// Automatic memory: extract any new facts about the user from this run.
+		// Fire-and-forget — the summary runs a model call of its own, so it must
+		// never delay the reply that is already on its way.
+		void summarizeMemory(sessionId, live, messagesBefore);
 	}
 	void steered;
 	return reply({ run_id: runId });
@@ -942,6 +947,72 @@ async function buildSession(
 		options.model = scripted.model;
 	}
 	return createAgent(options);
+}
+
+/**
+ * Extract facts about the user from a finished run and record them to memory.
+ *
+ * Runs asynchronously after the reply is sent, so a slow summary never holds
+ * up the conversation. Skips when the run was scripted (no credentials), when
+ * the run added no user message, and when the transcript is too thin to
+ * summarize. Failures are silent — memory is a nice-to-have, and a failed
+ * summary must never surface to the conversation that is already over.
+ */
+async function summarizeMemory(sessionId: string, live: LiveSession, fromIndex: number): Promise<void> {
+	try {
+		if (useScripted()) return;
+		const messages = live.session.agent.state.messages;
+		const turned = messages.slice(fromIndex);
+		const userText = turned
+			.filter((m) => m.role === "user")
+			.map((m) => blocksToText((m as { content?: unknown }).content as never))
+			.filter((t) => t.trim().length > 0)
+			.join("\n");
+		if (userText.trim().length < 40) return;
+		const dialogue = turned
+			.filter((m) => m.role === "user" || m.role === "assistant")
+			.map((m) => `${m.role}: ${blocksToText((m as { content?: unknown }).content as never).slice(0, 2000)}`)
+			.join("\n")
+			.slice(0, 12000);
+		if (dialogue.trim().length < 40) return;
+		const existing = loadMemory().map((entry) => `- ${entry.key}: ${entry.value}`).join("\n") || "（无）";
+		const prompt = [
+			"从下面的对话中提取关于用户的新信息（称呼、语言、时区、技术栈、项目背景、偏好等）。",
+			"只输出已有记忆中缺失或需要更新的条目，输出严格 JSON 数组，每个元素 {\"key\": string, \"value\": string, \"category\": \"profile\"|\"preference\"|\"project\"|\"fact\"}。",
+			"没有新信息就输出 []。不要编造对话中不存在的事实。不要输出解释。",
+			"",
+			"已有记忆：",
+			existing,
+			"",
+			"对话：",
+			dialogue,
+		].join("\n");
+		const session = await buildSession(undefined, { mode: "general" }, { tier: "read-only", approval: "never" });
+		try {
+			await session.prompt(prompt);
+			const last = session.agent.state.messages[session.agent.state.messages.length - 1];
+			const raw = blocksToText((last as { content?: unknown }).content as never);
+			const body = raw.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim();
+			const start = body.indexOf("[");
+			const end = body.lastIndexOf("]");
+			if (start === -1 || end === -1) return;
+			const parsed: unknown = JSON.parse(body.slice(start, end + 1));
+			if (!Array.isArray(parsed)) return;
+			for (const item of parsed) {
+				const entry = item as { key?: unknown; value?: unknown; category?: unknown };
+				if (typeof entry.key !== "string" || typeof entry.value !== "string") continue;
+				const value = entry.value.trim();
+				if (!value) continue;
+				const category = entry.category === "profile" || entry.category === "preference" || entry.category === "project" ? entry.category : "fact";
+				upsertMemory(entry.key, value, category, "summary");
+			}
+		} finally {
+			session.dispose();
+		}
+	} catch (error) {
+		// Best-effort by design: memory extraction must never break a finished run.
+		console.error("[gdou-bridge] memory summary failed:", (error as Error)?.message ?? String(error));
+	}
 }
 
 /**
@@ -1179,6 +1250,26 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 
 		case "stats.overview":
 			return reply(usageOverview());
+
+		case "memory.list":
+			return reply({ entries: loadMemory() });
+
+		case "memory.update": {
+			const key = params.key as string;
+			const value = (params.value as string)?.trim();
+			const category = params.category === "profile" || params.category === "preference" || params.category === "project" || params.category === "fact"
+				? (params.category as "profile" | "preference" | "project" | "fact")
+				: "fact";
+			if (!key || !value) return error(-32602, "记忆条目需要 key 和 value");
+			return reply({ entry: upsertMemory(key, value, category, "manual") });
+		}
+
+		case "memory.delete": {
+			const key = params.key as string;
+			if (!key) return error(-32602, "缺少记忆条目 key");
+			deleteMemory(key);
+			return reply({});
+		}
 
 		case "settings.get": {
 			const settings = loadSettings();

@@ -21,6 +21,7 @@ import { delegateTool } from "../tools/delegate.ts";
 import { askUserTool, type AskUserQuestion } from "../tools/ask-user.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
+import { memoryPromptBlock, memorySnapshot } from "../memory/memory.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
 import { type FallbackReport, withModelFallback } from "./fallback.ts";
 import { LoopGuard, DEFAULT_LOOP_REPEAT_LIMIT, loopBlockReason } from "./loop-guard.ts";
@@ -451,6 +452,11 @@ function assemble(
 	// `load_skill` can still reach them).
 	const skills = loadSkills(cwd, disabledSkills);
 
+	// Automatic user memory: facts recorded from earlier conversations, injected
+	// so the agent is not a blank slate at session start. Empty until the first
+	// summary pass runs, so the prompt block is simply absent for most sessions.
+	const memoryPromptText = memoryPromptBlock(memorySnapshot());
+
 	// `load_skill` rides along with the mode's own tools. It is not part of the
 	// mode's set because it is not a capability the mode decides — every session
 	// can read a skill, since a skill is just instructions — and it is not
@@ -548,7 +554,7 @@ function assemble(
 
 	const agent = new Agent({
 		initialState: {
-			systemPrompt: composePrompt(profile.systemPrompt({ cwd }), expert, skills.skills),
+			systemPrompt: composePrompt(profile.systemPrompt({ cwd }), expert, skills.skills, memoryPromptText),
 			model,
 			thinkingLevel,
 			// `load_skill` rides along with the mode's own tools, computed above.

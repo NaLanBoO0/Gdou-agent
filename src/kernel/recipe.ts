@@ -98,10 +98,13 @@ export function narrowTools(modeTools: AnyTool[], expert: Expert | undefined): T
  * The heading is English to match the mode prompts; the bodies themselves are
  * whatever language their authors wrote them in.
  */
-export function composePrompt(modePrompt: string, expert: Expert | undefined, skills: Skill[] = []): string {
+export function composePrompt(modePrompt: string, expert: Expert | undefined, skills: Skill[] = [], memoryText?: string): string {
 	const parts = [modePrompt];
 	if (expert) {
 		parts.push("", "---", "", `## Expert methodology: ${expert.label}`, "", expert.methodology);
+	}
+	if (memoryText && memoryText.trim().length > 0) {
+		parts.push(memoryText.trimEnd());
 	}
 	if (skills.length > 0) {
 		const catalog = skills
