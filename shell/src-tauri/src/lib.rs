@@ -151,6 +151,15 @@ fn daemon_start(state: State<Mutex<BridgeState>>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_path_with_app(app: tauri::AppHandle, path: String, app_id: String) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    app.opener()
+        .open_path(&path, Some(&app_id))
+        .map_err(|e| format!("open_path_with_app failed: {e}"))?;
+    Ok(())
+}
+
 /// Stop the bridge process we own. Called on app/window exit so no orphan `node`
 /// keeps holding 7438.
 fn stop_bridge(state: &State<Mutex<BridgeState>>) {
@@ -168,7 +177,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(BridgeState::new()))
-        .invoke_handler(tauri::generate_handler![daemon_start])
+        .invoke_handler(tauri::generate_handler![daemon_start, open_path_with_app])
         .build(tauri::generate_context!())
         .expect("error while building Gdouwork")
         .run(|app, event| {

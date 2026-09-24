@@ -459,7 +459,7 @@ function toggleProjectCollapsed(item: Workspace) {
   try { localStorage.setItem("gdou.collapsedProjects", JSON.stringify([...next])); } catch { /* 忽略存储配额错误 */ }
 }
 const projectPreviewId = ref<string | null>(null);
-const projectMenuFlip = ref(false);
+const projectMenuTopOffset = ref(34);
 const projectPreviewStyle = ref<Record<string, string>>({});
 let projectPreviewCloseTimer: number | undefined;
 const projectEditingId = ref<string | null>(null);
@@ -626,11 +626,19 @@ function openProjectActions(item: Workspace, event?: MouseEvent) {
   projectPreviewId.value = null;
   sessionPreview.value = null;
   projectActionsOpen.value = item.workspace_id;
-  // 用点击位置的 clientY 直接预判，不等 DOM 挂载：若菜单(约 340px)会溢出视口
-  // 底部就向上展开。这是最稳的方式，不再依赖 rAF 测量时序。
-  const MENU_HEIGHT = 340;
-  const clientY = typeof event?.clientY === "number" ? event.clientY : 0;
-  projectMenuFlip.value = clientY + MENU_HEIGHT > window.innerHeight - 8;
+  // 与会话右键菜单一致：默认在行的左下角、贴近行向下弹出；仅当菜单会溢出
+  // 视口底部时才整体上移，保证每个子项都点得到，同时不跳得太远。
+  projectMenuTopOffset.value = 34;
+  const row = event?.currentTarget as HTMLElement | null;
+  if (!row) return;
+  void nextTick(() => {
+    const menu = row.querySelector<HTMLElement>(".project-action-menu");
+    if (!menu) return;
+    const rowTop = row.getBoundingClientRect().top;
+    const height = menu.offsetHeight || 340;
+    const overflow = rowTop + 34 + height - (window.innerHeight - 8);
+    projectMenuTopOffset.value = overflow > 0 ? Math.max(34 - overflow, 8 - rowTop) : 34;
+  });
 }
 function handleProjectRowPointerDown(item: Workspace, event: PointerEvent) {
   if (event.button !== 0) return;
@@ -3438,7 +3446,22 @@ function handleDocumentPointerDown(event: PointerEvent) {
   const target = event.target as HTMLElement | null;
   if (!target?.closest(".app-menu-bar")) closeAppMenu();
   if (!target?.closest(".task-search-popover, .task-search-toggle")) clearTaskSearch();
-  if (!target?.closest(".project-row-shell")) projectActionsOpen.value = null;
+  if (!target?.closest(".project-row-shell")) {
+    // 加大关闭容差：点击点落在已打开的项目菜单周边一定范围时，不关闭
+    //（避免"没点到就消失"）。
+    if (projectActionsOpen.value) {
+      const menu = document.querySelector<HTMLElement>(".project-action-menu");
+      let keepOpen = false;
+      if (menu) {
+        const r = menu.getBoundingClientRect();
+        const pad = 14;
+        keepOpen = event.clientX >= r.left - pad && event.clientX <= r.right + pad && event.clientY >= r.top - pad && event.clientY <= r.bottom + pad;
+      }
+      if (!keepOpen) projectActionsOpen.value = null;
+    } else {
+      projectActionsOpen.value = null;
+    }
+  }
   if (!target?.closest(".launcher-project-control")) launcherProjectMenuOpen.value = false;
   if (!target?.closest(".launcher-plugin-control, .active-plugin-control")) { launcherPluginMenuOpen.value = false; activePluginMenuOpen.value = false; }
   if (!target?.closest(".launcher-permission-control")) launcherPermissionMenuOpen.value = false;
@@ -3793,7 +3816,7 @@ watch(activeWorkspace, (project) => {
                 <AppIcon v-if="item.pinned" name="Pin" :size="12" class="project-pin-badge" />
                 <span>{{ item.name }}</span>
               </button>
-              <div v-if="projectActionsOpen === item.workspace_id" class="project-action-menu" :class="{ 'project-action-menu--up': projectMenuFlip }" role="menu" :aria-label="t('app.projectActionsAria', { name: item.name })">
+              <div v-if="projectActionsOpen === item.workspace_id" class="project-action-menu" :style="{ top: projectMenuTopOffset + 'px' }" role="menu" :aria-label="t('app.projectActionsAria', { name: item.name })">
                 <button role="menuitem" :disabled="projectActionBusy" @click="toggleProjectPinned(item)"><AppIcon v-if="item.pinned" name="PinOff" :size="16" /><AppIcon v-else name="Pin" :size="16" />{{ item.pinned ? t('app.unpin') : t('app.pin') }}</button>
                 <button role="menuitem" @click="beginProjectEdit(item)"><AppIcon name="Pencil" :size="16" />{{ t('app.edit') }}</button>
                 <div class="project-action-menu__separator" />
