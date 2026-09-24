@@ -117,15 +117,28 @@ fn daemon_start(state: State<Mutex<BridgeState>>) -> Result<(), String> {
     let current = env::current_dir().map_err(|e| e.to_string())?;
 
     // Prefer a self-contained bridge.exe (packaged); fall back to `node` +
-    // dist/bridge.cjs for dev checkouts that lack the SEA build.
-    let child = if let Some(exe) = bridge_exe_path() {
-        Command::new(exe).current_dir(current.clone()).spawn()
-    } else {
-        let path = bridge_path();
-        let node = env::var("GDOU_NODE").unwrap_or_else(|_| "node".to_string());
-        Command::new(node).arg(&path).current_dir(current.clone()).spawn()
+    // dist/bridge.cjs for dev checkouts that lack the SEA build. Either way,
+    // hide the child's console (CREATE_NO_WINDOW) so users never see a cmd
+    // window pop up next to the app.
+    let mut command = match bridge_exe_path() {
+        Some(exe) => Command::new(exe),
+        None => {
+            let node = env::var("GDOU_NODE").unwrap_or_else(|_| "node".to_string());
+            let mut c = Command::new(node);
+            c.arg(bridge_path());
+            c
+        }
     };
-    let child = child.map_err(|e| format!("failed to start bridge: {e}"))?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = command
+        .current_dir(&current)
+        .spawn()
+        .map_err(|e| format!("failed to start bridge: {e}"))?;
 
     lock.child = Some(child);
     drop(lock);
