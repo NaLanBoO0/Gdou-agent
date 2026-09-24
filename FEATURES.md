@@ -1629,6 +1629,13 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
     会话详情的统计行显示真实数字；
   - `session.list` 与 `stats.overview` 对无 ledger 记录的旧会话回退到从 transcript 求和；
   - 顺带修掉 `usage.cost` 解析 bug——pi 的 cost 是对象 `{...total}`，原先都读成 0。
+- **实时路径改为扫消息**：逐事件累计不可靠（provider 只在最后一个 chunk 回传 usage，
+  流式 message_update 未必携带）。run 开始时记录 transcript 长度，`run.finished` 到达时
+  扫描本轮新增的 assistant 消息取权威 usage（pi 先更新 state 再广播给订阅者，时序安全），
+  实测真实 DeepSeek run 的 `run.finished` 与 ledger 都记录真实 token/cost。
+- **session.list 的 `??` 陷阱**：ledger 对某会话可能只有全 0 条目（脚本化/未捕获），
+  那是真实对象而非空——`??` 不会 fallthrough 到 transcript。改为 ledger 全 0 时也回退
+  transcript，最新会话的列表/悬停不再显示 0。
 
 ---
 

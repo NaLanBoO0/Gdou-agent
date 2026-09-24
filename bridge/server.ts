@@ -372,27 +372,6 @@ function translate(event: { type: string; [key: string]: unknown }, runId: strin
 	}
 }
 
-/** Pull token/cache/cost usage out of a pi event that carries it (assistant
- *  message updates carry the authoritative usage). Best-effort: any field shape
- *  is tolerated; missing fields just stay at their current (usually 0) value. */
-function accumulateUsage(
-	event: { type: string; [key: string]: unknown },
-	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number },
-): void {
-	const message = event.message as { usage?: unknown } | undefined;
-	const u = (event.usage ?? message?.usage) as Record<string, unknown> | undefined;
-	if (!u || typeof u !== "object") return;
-	const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
-	usage.input += num(u.input ?? u.input_tokens);
-	usage.output += num(u.output ?? u.output_tokens);
-	usage.cacheRead += num(u.cacheRead ?? u.cache_read_input_tokens);
-	usage.cacheWrite += num(u.cacheWrite ?? u.cache_creation_input_tokens);
-	// pi 的 Usage.cost 是对象 { input, output, cacheRead, cacheWrite, total }，
-	// 直接 Number() 会得 NaN；取 total 才是 provider 报告的总费用。
-	const cost = u.cost as { total?: unknown } | undefined;
-	usage.cost += num(cost?.total);
-}
-
 /** Ledger of token usage, appended one JSON object per finished run. */
 const USAGE_LEDGER = join(AGENT_HOME, "usage.ndjson");
 
@@ -443,6 +422,9 @@ function usageOverview(): {
 	const total = { runs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, elapsedMs: 0 };
 	const byDay = new Map<string, { runs: number; input: number; output: number; cost: number }>();
 	const byModel = new Map<string, { runs: number; input: number; output: number; cost: number }>();
+	// Sessions with usable ledger entries must not be re-summed from transcripts
+	// below, or their tokens would count twice.
+	const ledgerNonZero = new Map<string, boolean>();
 	try {
 		if (!existsSync(USAGE_LEDGER)) return { total, byDay: [], byModel: [] };
 		const lines = readFileSync(USAGE_LEDGER, "utf-8").split("\n").filter((l) => l.trim().length > 0);
@@ -454,6 +436,7 @@ function usageOverview(): {
 			const output = num(entry.output);
 			const cost = num(entry.cost);
 			const elapsedMs = num(entry.elapsedMs);
+			if (typeof entry.sessionId === "string" && (input > 0 || output > 0)) ledgerNonZero.set(entry.sessionId, true);
 			total.runs += 1;
 			total.input += input;
 			total.output += output;
@@ -475,6 +458,10 @@ function usageOverview(): {
 	// from the persisted transcripts so the overview is not silently missing
 	// every run made before usage tracking existed.
 	for (const item of listSessions()) {
+		// A session whose runs the ledger already counted must not be summed from
+		// its transcript again. The fallback exists for sessions the ledger never
+		// saw (or only saw with zero tokens, e.g. scripted previews).
+		if (ledgerNonZero.get(item.id)) continue;
 		const used = storedSessionUsage(item.id);
 		if (!used) continue;
 		const day = new Date(item.updatedAt).toLocaleDateString("sv-SE");
@@ -812,20 +799,39 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 	const content = params.content as string;
 	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
 	const runStartedAt = Date.now();
+	// pi fills the authoritative usage on the final assistant message; the
+	// streamed message-update events may or may not carry it (providers only
+	// send usage on the last chunk). Snapshot the transcript length at run start
+	// and scan the messages this run appended when it finishes — that is where
+	// the numbers provably live (the persisted transcript carries them).
+	const messagesBefore = live.session.agent.state.messages.length;
 	const unsubscribe = live.session.subscribe((event) => {
 		// Delivered files are recorded as they happen, so the artifact panel
 		// shows what this run actually handed over.
 		if (event.type === "tool_end") captureDelivered(event as { name?: unknown; result?: unknown });
-		// pi streams real token usage on assistant message updates. Accumulate it
-		// so `run.finished` can report honest numbers instead of zeros.
-		accumulateUsage(event, usage);
 		for (const translated of translate(event, runId)) {
-			if (translated.type === "run.finished" && (usage.input || usage.output || usage.cacheRead)) {
-				translated.total_input_tokens = usage.input;
-				translated.total_output_tokens = usage.output;
-				translated.cache_read_input_tokens = usage.cacheRead;
-				translated.cache_creation_input_tokens = usage.cacheWrite;
-				translated.elapsed_s = Math.round((Date.now() - runStartedAt) / 1000);
+			if (translated.type === "run.finished") {
+				const messages = live.session.agent.state.messages;
+				for (let index = messagesBefore; index < messages.length; index++) {
+					const message = messages[index] as { role?: unknown; usage?: unknown };
+					if (message.role !== "assistant") continue;
+					const u = message.usage as Record<string, unknown> | undefined;
+					if (!u || typeof u !== "object") continue;
+					const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+					usage.input += num(u.input);
+					usage.output += num(u.output);
+					usage.cacheRead += num(u.cacheRead);
+					usage.cacheWrite += num(u.cacheWrite);
+					const cost = u.cost as { total?: unknown } | undefined;
+					usage.cost += num(cost?.total);
+				}
+				if (usage.input || usage.output || usage.cacheRead) {
+					translated.total_input_tokens = usage.input;
+					translated.total_output_tokens = usage.output;
+					translated.cache_read_input_tokens = usage.cacheRead;
+					translated.cache_creation_input_tokens = usage.cacheWrite;
+					translated.elapsed_s = Math.round((Date.now() - runStartedAt) / 1000);
+				}
 			}
 			send(socket, { kind: "event", event: translated });
 		}
@@ -1158,7 +1164,16 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 		case "session.list": {
 			const totals = usageTotalsBySession();
 			return reply({
-				sessions: listSessions().map((item) => snapshotOf(item, totals.get(item.id) ?? storedSessionUsage(item.id))),
+				sessions: listSessions().map((item) => {
+					const t = totals.get(item.id);
+					// `t` may be a real object of zeros (a run recorded no usage, e.g.
+					// scripted or before the ledger captured tokens) — that is not
+					// "no data". Fall through to the transcript only when the ledger
+					// has nothing usable, so the latest live-run session still shows
+					// the numbers recovered from its messages.
+					const used = t && (t.input > 0 || t.output > 0) ? t : storedSessionUsage(item.id);
+					return snapshotOf(item, used);
+				}),
 			});
 		}
 
