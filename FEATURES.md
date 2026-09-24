@@ -92,7 +92,7 @@
 | 46 | **动效（流式光标 + 思考动画）** ⚠️ 随 Electron 下线 | `renderer/chat.css`、`renderer/app.js` | 流式光标、思考三点跳动、思考扫光等动效在 Electron 渲染层实现；shell 有自己的一套动效 |
 | 47 | **marked 排版 + 工具折叠 + 等待动效** ⚠️ 随 Electron 下线 | `renderer/marked.umd.js`、`renderer/app.js`、`renderer/chat.css` | 输出排版/工具折叠/等待动效；shell 用 marked 做排版、自己实现工具折叠与等待动效 |
 | 48 | **MCP（stdio 客户端）** | `src/mcp/{config,client,schema,tool,index,approval}.ts`、`kernel/agent.ts`、`shell/`（设置页审批） | 接 `@modelcontextprotocol/sdk`，把 stdio MCP server 的工具挂成 agent 工具。配置三级作用域合并 + JSONC 注释 + `${VAR}` 扩展；工具名加 `mcp__<server>__` 前缀；broken server 报进 `session.mcpErrors`。**I4 审批已实现**：首次连接需用户批准（见 2.43） |
-| 49 | **桥接层（方案B）** | `bridge/server.ts` | JSON-RPC over WebSocket（7438），57 个方法把内核能力映射给 shell；事件翻译、会话持久化、断线后自动重建；诚实拒绝未实现能力（见 2.44） |
+| 49 | **桥接层（方案B）** | `bridge/server.ts` | JSON-RPC over WebSocket（7438），63 个方法把内核能力映射给 shell；事件翻译、会话持久化、断线后自动重建；诚实拒绝未实现能力（见 2.44） |
 | 50 | **shell 工作台（方案B）** | `shell/`（Vite + Vue3） | 自绘桌面工作台：会话、时间线、检查器、技能中心、自动化页、源码控制；专家选择、备用模型、MCP 徽标（见 2.45） |
 | 51 | **自动化（定时任务）** | `src/automation/schedule.ts`、`bridge/server.ts` | 配方 + 提示词 + 触发时机；运行时触发（桥进程存活期间）；产出单独概念不混入历史；无人值守默认 read-only（见 2.46） |
 | 52 | **提问机制（ask_user）** | `src/tools/ask-user.ts`、`kernel/agent.ts`、`bridge/server.ts` | 模型调用 `ask_user` 向用户提出结构化问题；run 挂起等回答；shell 弹多选/多选弹窗（见 2.47） |
@@ -1531,7 +1531,7 @@ spawn 一个第三方进程。审批状态存在 `~/.gdou-agent/mcp-approvals.js
 方案B 让 shell 是自绘桌面工作台（`shell/`，Vite dev server 5173），内核通过 `bridge/`
 以 JSON-RPC over WebSocket（`ws://127.0.0.1:7438`）暴露给它。
 
-**桥是薄映射层，不是二道实现**：`bridge/server.ts` 把内核能力翻译成 shell 的 57 个方法，
+**桥是薄映射层，不是二道实现**：`bridge/server.ts` 把内核能力翻译成 shell 的 63 个方法，
 事件流按一张翻译表归一（`run_start → run.started`、`text_delta → llm.token`、
 `tool_start/end → tool.call_started/finished` 等）。**诚实原则**是桥的底线：
 
@@ -1798,7 +1798,7 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
 - `npm run smoke` **281+ 条断言**：上下文裁剪、专家收窄、模式数据、重复调用守卫、备用模型、
   按模式选模型、MCP 客户端与配置、以及本轮新增的 **MCP 审批门 4 条**（未批准不挂载 /
   已批准挂载 / 门禁报告 / 坏 server 不致命）
-- **桥接层**（方案B）是当前 GUI 的全部后端：57 个方法映射内核能力，事件翻译、会话持久化
+- **桥接层**（方案B）是当前 GUI 的全部后端：63 个方法映射内核能力，事件翻译、会话持久化
   （每次 run 落盘、桥重启自动重建）、断线自动重连（指数退避，实测杀桥后 12 秒内恢复）
 - **阶段3 独有能力 UI**（2026-09-24）：MCP 工具徽标（紫色 server 徽标）、专家选择器 +
   会话头专家徽标、备用模型配置下拉、上下文占用条（SessionStatsLine）、变更追踪
