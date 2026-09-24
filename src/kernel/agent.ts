@@ -573,7 +573,7 @@ function assemble(
 			if (decision.kind === "ask" && options.approver && policy.approval === "ask") {
 				const approved = await options.approver({ toolName: context.toolCall.name, reason: decision.reason });
 				decision = approved
-					? { kind: "allow", stage: decision.stage, reason: decision.reason }
+					? { kind: "allow", stage: decision.stage }
 					: { kind: "deny", stage: decision.stage, reason: `${decision.reason}\n（用户拒绝了本次审批）` };
 			}
 			decision = resolveAsk(decision, policy, options.approver);

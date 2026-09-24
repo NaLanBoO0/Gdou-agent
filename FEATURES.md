@@ -1795,7 +1795,7 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
 - `typecheck` 干净；`check:vendor`、`smoke`、`check:tui`、`check:tools` 全通过（`npm run check` 一次跑完）
 - **项目已自持**：pi 源码在 `vendor/pi`，工具链（`tsx`、`tsgo`）在本项目 `node_modules`，`package.json` 里没有任何路径指回 `../pi-main`
 - `vendor:pi` 重跑幂等：701 文件重拷后 `check:vendor` 仍 701/701
-- `npm run smoke` **281+ 条断言**：上下文裁剪、专家收窄、模式数据、重复调用守卫、备用模型、
+- `npm run smoke` **362 条断言**：上下文裁剪、专家收窄、模式数据、重复调用守卫、备用模型、
   按模式选模型、MCP 客户端与配置、以及本轮新增的 **MCP 审批门 4 条**（未批准不挂载 /
   已批准挂载 / 门禁报告 / 坏 server 不致命）
 - **桥接层**（方案B）是当前 GUI 的全部后端：63 个方法映射内核能力，事件翻译、会话持久化

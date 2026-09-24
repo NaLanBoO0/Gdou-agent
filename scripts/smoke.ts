@@ -192,7 +192,7 @@ async function checkExperts(): Promise<void> {
 
 	// ---- parsing --------------------------------------------------------
 	const builtins = listExperts(process.cwd());
-	check("built-in experts load", builtins.length === 3, builtins.map((e) => e.id).join(", "));
+	check("built-in experts load", builtins.length === 6, builtins.map((e) => e.id).join(", "));
 	check("every expert has a description", builtins.every((e) => e.description.length > 0));
 	check("every expert has a methodology", builtins.every((e) => e.methodology.length > 50));
 
@@ -332,7 +332,7 @@ async function checkExperts(): Promise<void> {
 		write("house-style.md", ["---", "name: 内部规范", "description: 按团队规范审查", "---", "", "遵守内部规范。"]);
 		const withProject = loadExperts(sandbox);
 		check("a project-level expert is found", withProject.experts.some((e) => e.id === "house-style"));
-		check("project experts add to the built-ins", withProject.experts.length === 4, `${withProject.experts.length}`);
+		check("project experts add to the built-ins", withProject.experts.length === 7, `${withProject.experts.length}`);
 
 		// Same id as a built-in: the project wins, and does not duplicate.
 		write("security-audit.md", ["---", "name: 本地安全审计", "description: 覆盖内置版本", "---", "", "本地版本。"]);
@@ -350,7 +350,7 @@ async function checkExperts(): Promise<void> {
 		const withBroken = loadExperts(sandbox);
 		check("a file that cannot load is reported", withBroken.errors.length === 1, `${withBroken.errors.length} error(s)`);
 		check("the error names the offending file", withBroken.errors[0]?.includes("broken.md") === true);
-		check("a broken file does not take the catalog down", withBroken.experts.length === 4);
+		check("a broken file does not take the catalog down", withBroken.experts.length === 7);
 
 		writeFileSync(join(dir, "no-frontmatter.md"), "just prose, no frontmatter\n", "utf-8");
 		check("a file with no frontmatter is reported", loadExperts(sandbox).errors.length === 2);
@@ -368,7 +368,7 @@ async function checkSkills(): Promise<void> {
 
 	// ---- parsing --------------------------------------------------------
 	const builtins = listSkills(process.cwd());
-	check("built-in skills load", builtins.length === 2, builtins.map((s) => s.id).join(", "));
+	check("built-in skills load", builtins.length === 11, builtins.map((s) => s.id).join(", "));
 	check("every skill has a description", builtins.every((s) => s.description.length > 0));
 	check("every skill has a body", builtins.every((s) => s.body.length > 0));
 

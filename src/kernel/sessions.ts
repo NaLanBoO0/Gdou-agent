@@ -269,6 +269,9 @@ export interface SessionDraft {
 	messages: AgentMessage[];
 	/** Overrides the title derived from the first user message. */
 	title?: string;
+	/** Pinned / archived flags, persisted like expert (absent = default when missing). */
+	pinned?: boolean;
+	archived?: boolean;
 }
 
 export function saveSession(session: SessionDraft): StoredSession {
