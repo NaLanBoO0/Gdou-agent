@@ -16,7 +16,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { copyFile, existsSync, mkdir } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -51,7 +51,24 @@ async function devServer() {
 async function buildAssets() {
   await buildBridge();
   await run("bridge-sea", "node", ["scripts/build-bridge-sea.mjs"], ROOT);
+  await stageManagedBinaries();
   await run("shell", "npx", ["vite", "build"], SHELL);
+}
+
+/** Copy rg/fd into shell/src-tauri/resources/bin so the NSIS installer ships
+ *  them (they come from the gitignored vendor/bin). The bridge provisions them
+ *  from that folder at runtime, so coding tools work offline without a download. */
+async function stageManagedBinaries() {
+  const sourceDir = join(ROOT, "vendor", "bin");
+  const destDir = join(ROOT, "shell", "src-tauri", "resources", "bin");
+  if (!existsSync(sourceDir)) return;
+  await new Promise((resolve_) => {
+    mkdir(destDir, { recursive: true }, () => resolve_());
+  });
+  for (const name of ["rg.exe", "fd.exe"]) {
+    const src = join(sourceDir, name);
+    if (existsSync(src)) copyFile(src, join(destDir, name), () => {});
+  }
 }
 
 const mode = process.argv[2];

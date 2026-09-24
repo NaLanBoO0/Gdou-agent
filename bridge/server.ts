@@ -70,6 +70,8 @@ import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
 import type { Skill } from "../src/skills/types.ts";
 import { workspacesPath } from "../src/paths.ts";
+import { PROJECT_ROOT } from "../src/paths.ts";
+import { provisionManagedBinaries } from "../src/kernel/toolchain.ts";
 
 const PORT = 7438;
 
@@ -1672,6 +1674,22 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			return error(-32601, NOT_IMPLEMENTED[method] ?? `此功能尚未实现（${method}）。`);
 		}
 	}
+}
+
+// Best-effort: make ripgrep/fd available offline so grep/find work without pi
+// having to download them on a machine with no internet. In the packaged Tauri
+// app the bridge runs as bridge.exe inside resources/, with the binaries at
+// resources/bin/. In a dev checkout they live at vendor/bin/.
+try {
+	const bridgeIsPackaged = /bridge\.exe$/i.test(process.execPath);
+	const toolchainSource = process.env.GDOU_TOOLCHAIN_DIR
+		?? (bridgeIsPackaged ? join(dirname(process.execPath), "bin") : join(PROJECT_ROOT, "vendor", "bin"));
+	const provisionReport = provisionManagedBinaries(toolchainSource);
+	const ready = [...provisionReport.copied, ...provisionReport.present];
+	if (ready.length) console.log(`[gdou-bridge] tools ready (offline): ${ready.join(", ")}`);
+	else if (provisionReport.missing.length) console.log(`[gdou-bridge] tools not bundled (${provisionReport.missing.join(", ")} will be downloaded)`);
+} catch (error) {
+	console.log(`[gdou-bridge] tools provisioning skipped: ${error instanceof Error ? error.message : String(error)}`);
 }
 
 const wss = new WebSocketServer({ port: PORT });

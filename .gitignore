@@ -18,6 +18,7 @@ release/
 # Self-contained bridge binary produced by `scripts/build-bridge-sea.mjs`.
 # Bundled by Tauri via `resources`, never committed.
 shell/src-tauri/resources/*.exe
+shell/src-tauri/resources/bin/
 
 # Tauri build output and generated schemas. Regenerated on demand.
 shell/src-tauri/target/

@@ -33,7 +33,9 @@
       "icons/icon.ico"
     ],
     "resources": [
-      "resources/bridge.exe"
+      "resources/bridge.exe",
+      "resources/bin/fd.exe",
+      "resources/bin/rg.exe"
     ]
   }
 }
