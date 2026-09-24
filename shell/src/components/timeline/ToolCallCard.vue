@@ -14,7 +14,10 @@ const isOpen = computed(() => props.expanded || open.value);
 const request = computed(() => JSON.stringify(props.call.params, null, 2));
 const detail = computed(() => {
   const value = props.call.params.command ?? props.call.params.cmd ?? props.call.params.path ?? props.call.params.query ?? props.call.params.description;
-  return typeof value === "string" ? value : props.call.name;
+  if (typeof value === "string") return value;
+  // MCP 工具无本地字段可读时回退到短名，避免把 `mcp__server__tool` 整串显示在详情里。
+  if (mcpServer.value) return props.call.name.replace(/^mcp__[^_]+__/, "");
+  return props.call.name;
 });
 const kind = computed(() => {
   const name = props.call.name.toLowerCase();
@@ -34,6 +37,8 @@ const actionLabel = computed(() => {
   if (/edit|patch/.test(name)) return "Edit";
   if (/write/.test(name)) return "Write";
   if (/read|file|dir/.test(name)) return "Read";
+  // MCP 工具：徽标已经说了来自哪个 server，这里只留下工具本身的短名。
+  if (mcpServer.value) return props.call.name.replace(/^mcp__[^_]+__/, "");
   return props.call.name;
 });
 const title = computed(() => {
@@ -45,6 +50,13 @@ const title = computed(() => {
 });
 const isFileTool = computed(() => /read|file|dir/i.test(props.call.name));
 const isPathLike = computed(() => /read|file|dir|edit|write/i.test(props.call.name));
+
+// MCP 工具名带 `mcp__<server>__<tool>` 前缀。徽标把 server 名拆出来，
+// 让「这是外部工具、来自哪个 server」和「这是本地工具」一眼可分。
+const mcpServer = computed(() => {
+  const match = /^mcp__([^_]+)__/.exec(props.call.name);
+  return match ? match[1] : null;
+});
 
 // 运行中计时
 const now = ref(Date.now());
@@ -100,6 +112,7 @@ const zoomedImage = ref<number | null>(null);
       <AppIcon v-else-if="isFileTool" name="FileText" :size="compact ? 12 : 14" />
       <AppIcon v-else name="Terminal" :size="compact ? 12 : 14" />
       <span v-if="!compact" class="tool-call-event__action">{{ actionLabel }}</span>
+      <span v-if="mcpServer" class="tool-call-event__mcp" :title="t('timeline.tool.mcpToolHint', { server: mcpServer })">{{ mcpServer }}</span>
       <span v-if="!compact" class="timeline-row__separator">·</span>
       <span class="tool-call-event__detail" :class="{ 'is-path': isPathLike }">{{ detail }}</span>
       <span v-if="imageUrls.length" class="tool-call-event__image-badge" :title="t('timeline.tool.screenshotCount', { count: imageUrls.length })"><AppIcon name="ImageIcon" :size="compact ? 11 : 12" />{{ imageUrls.length }}</span>
@@ -233,6 +246,19 @@ const zoomedImage = ref<number | null>(null);
   background: #f3f4f6;
   border-radius: 3px;
   font: 10px Consolas, monospace;
+}
+
+/* MCP 外部工具徽标：紫色系与本地工具行区分，附 server 名 */
+.tool-call-event__mcp {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.1);
+  border: 1px solid rgba(124, 58, 237, 0.22);
+  border-radius: 3px;
+  font: 10px/1.4 Consolas, monospace;
 }
 
 .tool-call-event__images {

@@ -130,6 +130,16 @@ export const settings = {
       loading: "Loading...",
       hint: "Select the provider configurations to import:",
     },
+    mcp: {
+      title: "MCP servers",
+      desc: "External tools connect over MCP (stdio); first connection needs your approval",
+      loading: "Reading MCP config…",
+      empty: "No MCP servers configured. Declare them in .mcp.json or .gdou-agent/mcp.json.",
+      approvalHint: "Only approved servers are launched; after approval their tools are available in sessions.",
+      approved: "Approved",
+      pending: "Pending",
+      approve: "Approve",
+    },
   },
   updater: {
     title: "Automatic updates",

@@ -79,6 +79,24 @@ export { getSkill, listSkills, loadSkills, readSkillReference, type SkillCatalog
 export type { Skill, SkillDraft, SkillReference } from "./skills/types.ts";
 export { loadSkillTool } from "./tools/load-skill.ts";
 export { delegateTool } from "./tools/delegate.ts";
+export { askUserTool, type AskUserQuestion } from "./tools/ask-user.ts";
+
+// MCP (stdio clients) — the orchestration entry and the approval gate.
+export { connectMcp, type McpSession } from "./mcp/index.ts";
+export { approveMcpServer, approvedMcpServers, isMcpServerApproved, mcpApprovalPath } from "./mcp/approval.ts";
+export { loadMcpConfig, type McpConfig, type McpServerConfig } from "./mcp/config.ts";
+
+// Automations (scheduled tasks) — storage and due-time arithmetic only.
+export {
+	deleteTask,
+	dueTasks,
+	getTask,
+	listTasks,
+	updateTaskResult,
+	upsertTask,
+	type ScheduledTask,
+	type ScheduledTaskDraft,
+} from "./automation/schedule.ts";
 
 // Markdown-backed definitions, shared by modes and experts
 export { parseFrontmatter, type Frontmatter } from "./definitions/frontmatter.ts";

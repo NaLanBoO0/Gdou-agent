@@ -162,6 +162,14 @@ export const app = {
   newWorkspace: "新建工作空间",
   openLocalFolder: "打开本地文件夹",
 
+  // 专家（方法论收窄层）
+  expertAria: "选择专家",
+  expertNone: "无专家",
+  expertNoneHint: "不启用专家，使用模式默认工具集",
+  expertHint: "专家决定工作方法，只能收窄工具集",
+  expertActiveOnSession: "本会话启用了专家 {name}",
+  expertNarrowed: "专家 {name} 收窄了工具集（{count} 个工具不可用）",
+
   // 权限模式
   permissionMode: {
     normal: "标准审批",

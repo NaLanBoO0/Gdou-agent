@@ -62,6 +62,11 @@ import { ModelRuntime, parseModelSpec, testModel } from "../src/kernel/runtime.t
 import { resolveTool } from "../src/profiles/tool-catalog.ts";
 import { getProfile } from "../src/profiles/registry.ts";
 import { installSkill, loadSkills, uninstallSkill } from "../src/skills/registry.ts";
+import { listExperts } from "../src/experts/registry.ts";
+import { approveMcpServer, approvedMcpServers, loadMcpConfig } from "../src/index.ts";
+import { askUserTool, type AskUserQuestion } from "../src/index.ts";
+import { deleteTask, dueTasks, getTask, listTasks, updateTaskResult, upsertTask } from "../src/automation/schedule.ts";
+import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
 import type { Skill } from "../src/skills/types.ts";
 
@@ -77,6 +82,49 @@ interface LiveSession {
 }
 
 const sessions = new Map<string, LiveSession>();
+
+/**
+ * Mid-run questions to the user.
+ *
+ * The shell shows a structured dialog (multiple choice / multi-select) when the
+ * model calls `ask_user`. The tool's `execute` holds the run open until the
+ * answer arrives: we push a `question.requested` event, park a resolver keyed
+ * by rpc_id, and `question.respond` resolves it with the answer text.
+ */
+interface PendingQuestion {
+	resolve: (answerText: string) => void;
+	sessionId: string;
+	runId: string;
+}
+const pendingQuestions = new Map<string, PendingQuestion>();
+/** The run currently streaming to a socket, so `ask_user` knows where to push. */
+let activeQuestionContext: { socket: WebSocket; sessionId: string; runId: string } | null = null;
+
+/** Wire `ask_user` to the shell: push the dialog, wait for the answer. */
+function askUserViaBridge(questions: AskUserQuestion[]): Promise<string> {
+	const context = activeQuestionContext;
+	if (!context) return Promise.resolve("（没有可用的提问通道）");
+	return new Promise((resolve) => {
+		const rpcId = randomUUID();
+		pendingQuestions.set(rpcId, { resolve, sessionId: context.sessionId, runId: context.runId });
+		send(context.socket, {
+			kind: "event",
+			event: {
+				type: "question.requested",
+				rpc_id: rpcId,
+				session_id: context.sessionId,
+				run_id: context.runId,
+				questions: questions.map((question) => ({
+					id: rpcId,
+					header: question.header ?? null,
+					question: question.question,
+					options: question.options,
+					multi_select: question.multi_select,
+				})),
+			},
+		});
+	});
+}
 
 /**
  * Write a live session's transcript to disk, mirroring what the desktop GUI's
@@ -97,6 +145,7 @@ function persistLive(sessionId: string, live: LiveSession): void {
 			id: sessionId,
 			profile: "general",
 			model: `${session.model.provider}/${session.model.id}`,
+			expert: session.recipe.expert,
 			cwd: session.cwd,
 			createdAt: live.createdAt ?? new Date().toISOString(),
 			updatedAt: new Date().toISOString(),
@@ -227,6 +276,7 @@ function snapshotOf(item: SessionSummary): Record<string, unknown> {
 		archived: false,
 		pinned: false,
 		workspace_id: process.cwd(),
+		expert: item.expert ?? null,
 		latest_run_id: null,
 		total_input_tokens: 0,
 		total_output_tokens: 0,
@@ -247,6 +297,11 @@ function settingsShape(settings: Settings): Record<string, unknown> {
 		provider: "openai",
 		api_format: "openai_chat_completions",
 		model: settings.model ?? "",
+		// The fallback model is a real kernel setting (switched to only when the
+		// primary fails before producing any output). Reported so the shell can
+		// show what would catch a provider outage, and so the settings page does
+		// not read as "no such thing exists".
+		fallback_model: settings.fallbackModel ?? "",
 		permission_mode: "normal",
 		context_window: 128_000,
 		max_output_tokens: 8_192,
@@ -413,7 +468,10 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 		// rehydration exists to prevent.
 		const stored = loadSession(sessionId);
 		if (!stored) return error(-32602, `unknown session: ${sessionId}`);
-		const rebuilt = await buildSession(stored.messages);
+		const rebuilt = await buildSession(stored.messages, {
+			mode: stored.profile,
+			expert: stored.expert ?? null,
+		}, undefined, askUserViaBridge);
 		live = { session: rebuilt, createdAt: stored.createdAt };
 		sessions.set(sessionId, live);
 	}
@@ -430,6 +488,10 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 		}
 	});
 
+	// The question channel points at this run for its lifetime, so an `ask_user`
+	// call mid-stream pushes the dialog to the right socket and waits there.
+	activeQuestionContext = { socket, sessionId, runId };
+
 	try {
 		await live.session.prompt(content);
 	} catch (err) {
@@ -445,6 +507,7 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 			},
 		});
 	} finally {
+		activeQuestionContext = null;
 		unsubscribe();
 		live.runId = undefined;
 		// The turn is done either way; keep the transcript on disk so the
@@ -462,13 +525,27 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
  * talkable again: without it, a resumed session would start empty and the
  * earlier turns — the reason the user reopened it — would be invisible to the
  * model.
+ *
+ * `recipe` lets the caller pick a mode and an expert. The bridge's sessions are
+ * always the general mode (the shell has no mode picker of its own), but the
+ * expert is a real user choice and must survive: it narrows the tool set and
+ * shapes the prompt, so a session that used one and a session that did not are
+ * not interchangeable. The recipe rides along on the persisted transcript, so
+ * a rehydrated session is rebuilt with the same expert.
  */
-async function buildSession(messages: NonNullable<Parameters<typeof createAgent>[0]>["messages"]): Promise<AgentSession> {
+async function buildSession(
+	messages: NonNullable<Parameters<typeof createAgent>[0]>["messages"],
+	recipe: { mode?: string; expert?: string | null } = {},
+	permission?: Parameters<typeof createAgent>[0]["permission"],
+	askUser?: Parameters<typeof createAgent>[0]["askUser"],
+): Promise<AgentSession> {
 	const cwd = process.cwd();
 	const options: Parameters<typeof createAgent>[0] = {
-		recipe: { mode: "general" },
+		recipe: { mode: recipe.mode ?? "general", expert: recipe.expert },
 		cwd,
 		settings: {},
+		...(permission ? { permission } : {}),
+		...(askUser ? { askUser } : {}),
 		...(messages ? { messages } : {}),
 	};
 	if (useScripted()) {
@@ -492,6 +569,58 @@ async function buildSession(messages: NonNullable<Parameters<typeof createAgent>
 }
 
 /**
+ * Next fire time for a schedule, computed the same way the shell's form does
+ * (daily / weekly / monthly). Stored as `next_run_at` so `dueTasks` only ever
+ * compares instants — timezone arithmetic happens here, once, at save time.
+ */
+function computeNextRun(type: ScheduledTask["schedule_type"], hour: number, minute: number, day: number, now = new Date()): string {
+	const next = new Date(now);
+	next.setSeconds(0, 0);
+	next.setHours(hour, minute, 0, 0);
+	if (type === "daily") {
+		if (next <= now) next.setDate(next.getDate() + 1);
+	} else if (type === "weekly") {
+		let offset = (day - now.getDay() + 7) % 7;
+		if (!offset && next <= now) offset = 7;
+		next.setDate(now.getDate() + offset);
+	} else if (type === "monthly") {
+		next.setDate(Math.min(day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+		if (next <= now) {
+			next.setMonth(next.getMonth() + 1, 1);
+			next.setDate(Math.min(day, new Date(next.getFullYear(), next.getMonth() + 1, 0).getDate()));
+		}
+	}
+	return next.toISOString();
+}
+
+/**
+ * Run one automation once.
+ *
+ * Unattended runs are read-only: `{ tier: "read-only", approval: "never" }`
+ * means the agent can read and reason but cannot write the workspace or run
+ * commands that would. "Do not ask" must mean "do not do" — this is the one
+ * place the shell's permission chooser is deliberately bypassed.
+ *
+ * The run never enters the conversation history: it builds a throwaway session
+ * over the task's prompt, records `last_result` on the task, and disposes. An
+ * automation's product is its outcome, not a chat the user is invited to reopen.
+ */
+async function runAutomation(task: ScheduledTask): Promise<void> {
+	try {
+		const session = await buildSession(undefined, { mode: "general" }, { tier: "read-only", approval: "never" });
+		try {
+			await session.prompt(task.prompt);
+		} finally {
+			session.dispose();
+		}
+		updateTaskResult(task.id, "completed", computeNextRun(task.schedule_type, task.hour, task.minute, task.schedule_type === "monthly" ? (task.day_of_month ?? 1) : task.day_of_week));
+	} catch (error) {
+		updateTaskResult(task.id, "failed", computeNextRun(task.schedule_type, task.hour, task.minute, task.schedule_type === "monthly" ? (task.day_of_month ?? 1) : task.day_of_week));
+		console.error(`[gdou-bridge] automation "${task.name}" failed:`, (error as Error).message);
+	}
+}
+
+/**
  * Why a method is not implemented, in the user's language.
  *
  * The shell shows an unmatched error message verbatim — its own translation
@@ -501,12 +630,6 @@ async function buildSession(messages: NonNullable<Parameters<typeof createAgent>
  * answer, so every refusal here says what is missing and why.
  */
 const NOT_IMPLEMENTED: Record<string, string> = {
-	// Automation: the kernel has no scheduler at all.
-	"schedule.create": "定时任务尚未实现：内核还没有自动化调度能力。",
-	"schedule.update": "定时任务尚未实现：内核还没有自动化调度能力。",
-	"schedule.pause": "定时任务尚未实现：内核还没有自动化调度能力。",
-	"schedule.run": "定时任务尚未实现：内核还没有自动化调度能力。",
-	"schedule.delete": "定时任务尚未实现：内核还没有自动化调度能力。",
 	// Plugin marketplace: a shell-specific concept with no counterpart here.
 	"plugin.install": "插件市场尚未实现：这里没有插件体系，扩展能力走技能与 MCP。",
 	"plugin.uninstall": "插件市场尚未实现：这里没有插件体系，扩展能力走技能与 MCP。",
@@ -532,7 +655,6 @@ const NOT_IMPLEMENTED: Record<string, string> = {
 	"workspace.resume": "恢复工作区尚未实现：只有一个工作目录。",
 	// Interaction channels the kernel does not have.
 	"permission.respond": "权限审批界面尚未接入：目前工具调用按内核的权限策略直接判定。",
-	"question.respond": "向用户提问尚未实现：模型会以文字形式提问，不走弹窗选项。",
 	"session.set_workspace": "切换会话的工作目录尚未实现。",
 };
 
@@ -583,6 +705,15 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			// through the interface — the shell's "未配置" badge must not argue
 			// with a key the user just saved.
 			const configured = presetsWithCredentials().length > 0 || credentialStore().storedProviderIds().size > 0;
+			// MCP servers reported from the config, not fabricated: the shell's
+			// badge wants to know what is declared, and the status distinguishes
+			// "approved and would connect" from "configured but waiting for the
+			// user's first-connection approval". A server that fails to connect
+			// surfaces per-session via `mcpErrors` instead.
+			const approved = new Set(approvedMcpServers());
+			const mcpServers = Object.entries(loadMcpConfig(process.cwd()))
+				.filter(([name, entry]) => entry && typeof entry === "object" && typeof entry.command === "string" && entry.disabled !== true)
+				.map(([name]) => ({ name, status: approved.has(name) ? "approved" : "pending" }));
 			return reply({
 				provider: "openai",
 				api_format: "openai_chat_completions",
@@ -596,15 +727,98 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 					enabled: !disabledSkills(settings).has(skill.id),
 					scope: "builtin",
 				})),
-				mcp_servers: [],
+				mcp_servers: mcpServers,
 			});
 		}
 
-		case "question.pending":
-			// The shell can ask the user multiple-choice questions mid-run. pi has
-			// no such mechanic — the model asks in prose. Returning empty is
-			// honest; faking a question would stall the composer on nothing.
-			return reply({ questions: [] });
+		case "expert.list": {
+			// Experts are markdown files (built-in / user / project), resolved on
+			// demand. Only the pickable surface is reported — id, name,
+			// description — never the methodology body, which belongs in the
+			// assembled prompt.
+			const experts = listExperts(process.cwd());
+			return reply({
+				experts: experts.map((expert) => ({
+					id: expert.id,
+					name: expert.label,
+					description: expert.description,
+				})),
+			});
+		}
+
+		case "mcp.list": {
+			// Every configured server plus its approval state, so the settings
+			// page can show what would connect and let the user approve what is
+			// still pending. `command` is the spawn target — the exact thing the
+			// approval is about — and showing it is the point of the row.
+			const approved = new Set(approvedMcpServers());
+			const servers = Object.entries(loadMcpConfig(process.cwd()))
+				.filter(([name, entry]) => entry && typeof entry === "object" && typeof entry.command === "string" && entry.disabled !== true)
+				.map(([name, entry]) => ({
+					name,
+					command: (entry as { command: string }).command,
+					approved: approved.has(name),
+				}));
+			return reply({ servers });
+		}
+
+		case "mcp.approve": {
+			const name = typeof params.name === "string" ? params.name.trim() : "";
+			if (!name) return error(-32602, "mcp server name is required");
+			const config = loadMcpConfig(process.cwd());
+			if (!config[name] || typeof config[name].command !== "string") {
+				return error(-32602, `unknown mcp server: ${name}`);
+			}
+			approveMcpServer(name);
+			return reply({ approved: [name] });
+		}
+
+		case "question.pending": {
+			// Questions that `ask_user` parked and the shell has not answered yet.
+			// Reported so a reconnect or a page refresh can rebuild the dialog that
+			// the composer is currently showing.
+			const sessionFilter = typeof params.session_id === "string" ? params.session_id : null;
+			const pending = [...pendingQuestions.entries()]
+				.filter(([, question]) => !sessionFilter || question.sessionId === sessionFilter)
+				.map(([rpcId, question]) => ({
+					rpc_id: rpcId,
+					session_id: question.sessionId,
+					run_id: question.runId,
+					questions: [],
+				}));
+			return reply({ pending });
+		}
+
+		case "question.respond": {
+			const rpcId = typeof params.rpc_id === "string" ? params.rpc_id : "";
+			const question = pendingQuestions.get(rpcId);
+			if (!question) return error(-32602, "没有这个待回答的问题，或它已被回答");
+			pendingQuestions.delete(rpcId);
+			// The answers come as `{ id, selected: string[], custom? }[]`. They are
+			// folded into one text block, which is what the model sees as the tool
+			// result — the tool's whole contract is "a human answered".
+			const answers = Array.isArray(params.answers) ? params.answers as Array<{ id?: string; selected?: string[]; custom?: string }> : [];
+			const text = answers
+				.map((answer, index) => {
+					const selected = (answer.selected ?? []).join(", ");
+					const custom = (answer.custom ?? "").trim();
+					return [selected, custom].filter(Boolean).join("；") || "（未选择）";
+				})
+				.join("\n");
+			// Tell the shell the dialog is closed (even if the tool's own event
+			// stream is what re-renders it) so the composer does not keep waiting.
+			send(socket, {
+				kind: "event",
+				event: {
+					type: "question.resolved",
+					rpc_id: rpcId,
+					session_id: question.sessionId,
+					run_id: question.runId,
+				},
+			});
+			question.resolve(text);
+			return reply({ answered: rpcId });
+		}
 
 		case "operation.list":
 			return reply({ operations: [] });
@@ -633,6 +847,9 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 						ts: stored.updatedAt,
 						model: stored.model,
 					})),
+				// The expert that shaped this conversation, so a reopened session shows
+				// the same "为什么工具变少了" indicator it had when it was created.
+				expert: stored.expert ?? null,
 				run_stats: {},
 				context_injections: [],
 			});
@@ -899,24 +1116,15 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			// provider-specific sampling); accepting and discarding them would make
 			// the settings page look saved while nothing changed.
 			if (typeof params.model === "string") settings.model = params.model;
+			// The fallback model is one we do store. Empty string means "clear it",
+			// which is how the shell's "无" option expresses itself.
+			if (typeof params.fallback_model === "string") {
+				const trimmed = params.fallback_model.trim();
+				if (trimmed) settings.fallbackModel = trimmed;
+				else delete settings.fallbackModel;
+			}
 			saveSettings(settings);
-			return reply({
-				settings: {
-					provider: "openai",
-					api_format: "openai_chat_completions",
-					model: settings.model ?? "",
-					permission_mode: "normal",
-					context_window: 128_000,
-					max_output_tokens: 8_192,
-					temperature: null,
-					top_p: null,
-					reasoning_effort: "",
-					timeout_s: 120,
-					max_retries: 2,
-					cache_control: false,
-					supports_vision: false,
-				},
-			});
+			return reply({ settings: settingsShape(settings) });
 		}
 
 		// ---- remaining session verbs ----
@@ -1036,9 +1244,85 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			return reply({ marketplaces: [], plugins: [], supported: false });
 
 		case "schedule.list":
-			// Automation is not implemented in the kernel yet. An empty list renders
-			// as a page with nothing scheduled, which is the truth.
-			return reply({ tasks: [] });
+			return reply({ tasks: listTasks() });
+
+		case "schedule.create": {
+			// The shell sends the task's fields at the top level (not nested under
+			// a `task` key), matching how `schedule.update`/`schedule.pause` work.
+			const input = params as Record<string, unknown>;
+			if (typeof input.prompt !== "string" || !input.prompt.trim()) {
+				return error(-32602, "定时任务需要一个非空的提示词");
+			}
+			const scheduleType = (["daily", "weekly", "monthly"] as const).includes(input.schedule_type as "daily") ? input.schedule_type as "daily" | "weekly" | "monthly" : "daily";
+			const saved = upsertTask({
+				id: typeof input.id === "string" ? input.id : undefined,
+				name: typeof input.name === "string" ? input.name : "未命名任务",
+				prompt: input.prompt.trim(),
+				timezone: typeof input.timezone === "string" ? input.timezone : "UTC",
+				schedule_type: scheduleType,
+				day_of_week: Number(input.day_of_week) || 0,
+				day_of_month: input.day_of_month !== undefined ? Number(input.day_of_month) || 1 : undefined,
+				hour: Number(input.hour) || 0,
+				minute: Number(input.minute) || 0,
+				status: "active",
+				missed_run_policy: input.missed_run_policy === "skip" ? "skip" : "run_once",
+				workspace_id: typeof input.workspace_id === "string" ? input.workspace_id : undefined,
+				budget: input.budget !== undefined ? Number(input.budget) || 300 : 300,
+				next_run_at: typeof input.next_run_at === "string" ? input.next_run_at : computeNextRun(scheduleType, Number(input.hour) || 0, Number(input.minute) || 0, scheduleType === "monthly" ? Number(input.day_of_month) || 1 : Number(input.day_of_week) || 0),
+			});
+			return reply({ task: saved });
+		}
+
+		case "schedule.update": {
+			// Same top-level convention as create; `id` is required to find the row.
+			const input = params as Record<string, unknown>;
+			const id = typeof input.id === "string" ? input.id : undefined;
+			const existing = id ? getTask(id) : undefined;
+			if (!existing) return error(-32602, "定时任务不存在");
+			const scheduleType = ["daily", "weekly", "monthly"].includes(input.schedule_type as string) ? input.schedule_type as "daily" | "weekly" | "monthly" : existing.schedule_type ?? "daily";
+			const saved = upsertTask({
+				id: existing.id,
+				name: typeof input.name === "string" ? input.name : existing.name,
+				prompt: typeof input.prompt === "string" && input.prompt.trim() ? input.prompt.trim() : existing.prompt,
+				timezone: typeof input.timezone === "string" ? input.timezone : existing.timezone,
+				schedule_type: scheduleType,
+				day_of_week: input.day_of_week !== undefined ? Number(input.day_of_week) || 0 : existing.day_of_week,
+				day_of_month: input.day_of_month !== undefined ? Number(input.day_of_month) || 1 : existing.day_of_month,
+				hour: input.hour !== undefined ? Number(input.hour) || 0 : existing.hour,
+				minute: input.minute !== undefined ? Number(input.minute) || 0 : existing.minute,
+				status: (["active", "paused", "failed", "waiting_authorization"] as const).includes(input.status as string) ? input.status as ScheduledTask["status"] : existing.status,
+				missed_run_policy: input.missed_run_policy === "skip" ? "skip" : "run_once",
+				workspace_id: typeof input.workspace_id === "string" ? input.workspace_id : existing.workspace_id,
+				budget: input.budget !== undefined ? Number(input.budget) || 300 : existing.budget ?? 300,
+				next_run_at: typeof input.next_run_at === "string" ? input.next_run_at : existing.next_run_at,
+			});
+			return reply({ task: saved });
+		}
+
+		case "schedule.pause": {
+			const id = params.id as string;
+			const existing = getTask(id);
+			if (!existing) return error(-32602, "定时任务不存在");
+			const saved = upsertTask({ ...existing, status: existing.status === "paused" ? "active" : "paused" });
+			return reply({ task: saved });
+		}
+
+		case "schedule.run": {
+			const id = params.id as string;
+			const existing = getTask(id);
+			if (!existing) return error(-32602, "定时任务不存在");
+			// Fire immediately, asynchronously, and report the run as accepted —
+			// the task card shows the outcome via its next refresh.
+			void runAutomation(existing);
+			return reply({ task: existing });
+		}
+
+		case "schedule.delete": {
+			const id = params.id as string;
+			const removed = deleteTask(id);
+			if (!removed) return error(-32602, "定时任务不存在");
+			return reply({ deleted: id });
+		}
 
 		case "provider.ccswitch_list":
 			return reply({ providers: [] });
@@ -1075,13 +1359,22 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 
 		case "session.create": {
 			const sessionId = randomUUID();
-			const session = await buildSession(undefined);
+			const expert = typeof params.expert === "string" && params.expert.trim() ? params.expert.trim() : undefined;
+			const session = await buildSession(undefined, { expert }, undefined, askUserViaBridge);
 			const live = { session, createdAt: new Date().toISOString() };
 			sessions.set(sessionId, live);
 			// Persist immediately so an empty task shows up in history even if the
 			// user closes it without a run, and so a later send can rehydrate it.
 			persistLive(sessionId, live);
-			return reply({ session_id: sessionId });
+			// The recipe's expert and the tools it narrowed away are known at build
+			// time and reported here so the shell can show "为什么工具变少了" without
+			// waiting for a run. `unavailable_tools` is honest: an expert that asks
+			// for tools the mode lacks is visible, not silently thinner.
+			return reply({
+				session_id: sessionId,
+				expert: session.recipe.expert ?? null,
+				unavailable_tools: session.unavailableTools,
+			});
 		}
 
 		case "session.send_message":
@@ -1108,6 +1401,20 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 }
 
 const wss = new WebSocketServer({ port: PORT });
+
+/**
+ * The runtime-only scheduler.
+ *
+ * Automations fire only while the bridge process is alive — that is the honest
+ * reading of "runtime only" in `schedule.ts`: nothing survives a restart, and
+ * the UI says so. A minute tick is coarse enough to be cheap and fine enough
+ * that a scheduled run lands within a minute of its time.
+ */
+setInterval(() => {
+	for (const task of dueTasks()) {
+		void runAutomation(task);
+	}
+}, 60_000).unref();
 
 /**
  * A port clash is the one failure a user hits repeatedly, and the raw

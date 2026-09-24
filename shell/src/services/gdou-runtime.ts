@@ -84,6 +84,7 @@ export type GitHistoryPage = { commits: GitCommitEntry[]; has_more: boolean };
 export type Session = {
   session_id: string; title: string; status: string; updated_at: string;
   archived: boolean; pinned: boolean; workspace_id: string | null; latest_run_id?: string | null;
+  expert?: string | null;
   total_input_tokens: number; total_output_tokens: number; total_elapsed_s: number;
 };
 export type RunStats = { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; elapsed_s: number };
@@ -94,6 +95,7 @@ export type SessionHistory = {
   messages: unknown[];
   run_stats: Record<string, RunStats>;
   context_injections: ContextInjectionRecord[];
+  expert?: string | null;
 };
 export type Artifact = { artifact_id: string; workspace_id: string; session_id?: string; run_id?: string; type: string; path: string; summary: string; hash: string; version: number; input_sources: Array<{ path: string; version?: string; hash?: string }>; generation_status: string; verification_status: string; preview?: { mime_type: string; text?: string }; delivery_ids: string[]; versions: Array<{ version: number; hash: string; size: number; created_at: string; path: string }> };
 export type DurableOperation = { operation_id: string; task_id: string; run_id?: string; session_id?: string; status: string; params_summary: string; external_object_id?: string; updated_at: string };
@@ -112,8 +114,14 @@ export type ModelRequestSettings = {
   temperature: number | null; top_p: number | null; reasoning_effort: "" | "low" | "medium" | "high" | "xhigh" | "max";
   timeout_s: number; max_retries: number; cache_control: boolean; supports_vision: boolean;
 };
-export type RuntimeSettings = ModelRequestSettings & { provider: "anthropic" | "openai"; model: string; permission_mode: "normal" | "accept_edits" | "plan" | "auto"; base_url?: string; experimental_jev?: boolean; jev_model?: string; jev_confidence_threshold?: number; jev_api_key_configured?: boolean };
+export type RuntimeSettings = ModelRequestSettings & { provider: "anthropic" | "openai"; model: string; permission_mode: "normal" | "accept_edits" | "plan" | "auto"; base_url?: string; experimental_jev?: boolean; jev_model?: string; jev_confidence_threshold?: number; jev_api_key_configured?: boolean; fallback_model?: string };
 export type RuntimeSettingsUpdate = Partial<Omit<RuntimeSettings, "jev_api_key_configured">> & { api_key?: string; jev_api_key?: string };
+export type ExpertSummary = {
+  id: string; name: string; description: string;
+};
+export type McpServerSummary = {
+  name: string; command: string; approved: boolean;
+};
 export type SkillSummary = {
   id: string; name: string; display_name: string; description: string; short_description: string;
   source: string; scope: "system" | "personal" | "workspace"; path: string; plugin?: string | null;
@@ -252,9 +260,32 @@ export async function deleteWorkspace(workspaceId: string): Promise<void> {
   await client.request("workspace.delete", { workspace_id: workspaceId, confirm: "delete" });
 }
 
-export async function createSession(workspace: Workspace | null): Promise<string> {
-  const result = await client.request("session.create", { mode: "chat", workspace_id: workspace?.workspace_id });
-  return String(result.session_id);
+export async function createSession(workspace: Workspace | null, expert?: string | null): Promise<{ session_id: string; expert: string | null; unavailable_tools: string[] }> {
+  const result = await client.request("session.create", {
+    mode: "chat",
+    workspace_id: workspace?.workspace_id,
+    ...(expert ? { expert } : {}),
+  });
+  return {
+    session_id: String(result.session_id),
+    expert: typeof result.expert === "string" ? result.expert : null,
+    unavailable_tools: Array.isArray(result.unavailable_tools) ? (result.unavailable_tools as string[]) : [],
+  };
+}
+
+export async function listExperts(): Promise<ExpertSummary[]> {
+  const result = await client.request("expert.list", {});
+  return (result.experts as ExpertSummary[] | undefined) ?? [];
+}
+
+export async function listMcpServers(): Promise<McpServerSummary[]> {
+  const result = await client.request("mcp.list", {});
+  return (result.servers as McpServerSummary[] | undefined) ?? [];
+}
+
+export async function approveMcpServer(name: string): Promise<string[]> {
+  const result = await client.request("mcp.approve", { name });
+  return (result.approved as string[] | undefined) ?? [];
 }
 
 export async function sessionHistory(sessionId: string): Promise<SessionHistory> {
@@ -263,6 +294,7 @@ export async function sessionHistory(sessionId: string): Promise<SessionHistory>
     messages: (result.messages as unknown[] | undefined) ?? [],
     run_stats: (result.run_stats as Record<string, RunStats> | undefined) ?? {},
     context_injections: (result.context_injections as ContextInjectionRecord[] | undefined) ?? [],
+    expert: typeof result.expert === "string" ? result.expert : null,
   };
 }
 

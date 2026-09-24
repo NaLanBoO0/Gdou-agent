@@ -65,8 +65,14 @@ export const model = {
   models: "Models",
   configCount: "{n} configured",
   loading: "Loading models",
-  empty: "No model configured",
+  empty: "No models configured",
   manage: "Add and manage models",
+  /** Fallback model: switched to only when the primary fails before producing output */
+  fallbackLabel: "Fallback model",
+  fallbackHint: "Rescue model used when the primary fails; only before any output is produced",
+  fallbackNone: "None",
+  fallbackSaveFailed: "Failed to save fallback model.",
+  fallbackSaving: "Saving",
   icon: {
     sparkles: "Sparkles",
     bot: "Bot",

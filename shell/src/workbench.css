@@ -1307,6 +1307,33 @@
 .launcher-menu-error { margin: 2px 8px 6px; color: #a74343; font-size: 10px; }
 .task-launcher .model-label { min-width: 0; max-width: 210px; overflow: hidden; color: #5c626b; text-overflow: ellipsis; white-space: nowrap; }
 .model-config-control { position: relative; flex: 0 1 auto; min-width: 0; }
+
+/* 专家选择器：与模型选择器同一形态，只是内容换成了方法论文件 */
+.expert-picker { position: relative; flex: 0 1 auto; min-width: 0; }
+.expert-trigger { display: flex; min-width: 0; max-width: 190px; height: 36px; align-items: center; gap: 6px; padding: 0 10px; color: #51575f; background: transparent; border: 1px solid transparent; border-radius: 9px; font-size: 13px; font-weight: 400; transition: color 140ms ease, background 140ms ease, border-color 140ms ease; }
+.expert-trigger:hover, .expert-trigger[aria-expanded="true"], .expert-trigger:focus-visible { color: #25292e; background: #f3f5f7; border-color: transparent; outline: none; }
+.expert-trigger.active { color: #5b3bb3; background: rgba(124, 58, 237, 0.08); }
+.expert-trigger > svg:first-child { flex: 0 0 auto; color: #858a91; }
+.expert-trigger.active > svg:first-child { color: #7c3aed; }
+.expert-trigger > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.expert-trigger > svg:last-child { flex: 0 0 auto; color: #858a91; }
+.expert-popover { position: absolute; z-index: 300; right: 0; bottom: calc(100% + 10px); width: min(320px, calc(100vw - 28px)); overflow: hidden; color: #292d32; background: #fff; border: 1px solid #dfe3e7; border-radius: 14px; box-shadow: 0 22px 55px #20252d20, 0 4px 14px #20252d10; animation: launcher-popover-in 140ms ease-out; }
+.expert-popover { max-height: min(360px, calc(100dvh - 110px)); padding: 6px 8px 9px; overflow-y: auto; scrollbar-width: thin; }
+.expert-popover > button { display: grid; width: 100%; min-height: 48px; grid-template-columns: 26px minmax(0, 1fr) 18px; align-items: center; gap: 8px; padding: 7px 9px; color: #30343a; background: transparent; border: 1px solid transparent; border-radius: 9px; text-align: left; transition: background 120ms ease, border-color 120ms ease; }
+.expert-popover > button:hover { background: #f5f7f9; border-color: #e9edf0; }
+.expert-popover > button[aria-checked="true"] { background: rgba(124, 58, 237, 0.07); border-color: rgba(124, 58, 237, 0.2); }
+.expert-popover > button > svg:first-child { color: #7c3aed; }
+.expert-popover > button > svg:last-child { color: #7c3aed; }
+.expert-popover > button > span { display: grid; min-width: 0; gap: 3px; }
+.expert-popover b { overflow: hidden; color: #161a1f; font-size: 13px; font-weight: 620; text-overflow: ellipsis; white-space: nowrap; }
+.expert-popover small { overflow: hidden; color: #858c94; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 会话头专家徽标（旧会话/有专家的会话可见） */
+.work-header__expert { display: inline-flex; align-items: center; gap: 4px; flex: 0 0 auto; max-width: 220px; padding: 2px 8px; color: #5b3bb3; background: rgba(124, 58, 237, 0.08); border: 1px solid rgba(124, 58, 237, 0.2); border-radius: 999px; font-size: 11px; overflow: hidden; }
+.work-header__expert span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-header__expert-narrowed { color: #b45309; background: rgba(180, 83, 9, 0.08); border-color: rgba(180, 83, 9, 0.22); }
+.work-header__expert-narrowed svg { color: #d97706; }
+
 .model-config-trigger { display: flex; min-width: 0; max-width: 250px; height: 36px; align-items: center; gap: 8px; padding: 0 10px; color: #51575f; background: transparent; border: 1px solid transparent; border-radius: 9px; font-size: 13px; font-weight: 400; transition: color 140ms ease, background 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
 .model-config-trigger:hover, .model-config-trigger[aria-expanded="true"], .model-config-trigger:focus-visible { color: #25292e; background: #f3f5f7; border-color: transparent; outline: none; }
 .model-config-trigger > i { width: 7px; height: 7px; flex: 0 0 auto; background: #a5aab0; border-radius: 50%; }

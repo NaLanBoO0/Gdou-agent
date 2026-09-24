@@ -14,6 +14,7 @@ import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { createMcpClient, type McpClient } from "./client.ts";
 import { loadMcpConfig, type McpServerConfig } from "./config.ts";
 import { mcpToolAsAgentTool } from "./tool.ts";
+import { isMcpServerApproved } from "./approval.ts";
 
 export interface McpSession {
 	/** All tools from all connected servers, ready to mount on the agent. */
@@ -33,6 +34,13 @@ export async function connectMcp(cwd: string): Promise<McpSession> {
 	for (const [name, entry] of Object.entries(config)) {
 		if (!entry || typeof entry !== "object" || typeof (entry as McpServerConfig).command !== "string") {
 			errors[name] = "配置缺少 command";
+			continue;
+		}
+		// I4 approval: an unapproved server is never spawned. It is reported, not
+		// skipped silently — its tools being absent would otherwise look like the
+		// config was never read.
+		if (!isMcpServerApproved(name)) {
+			errors[name] = "待用户批准（MCP 首次连接需要确认）";
 			continue;
 		}
 		const client = createMcpClient(name, entry as McpServerConfig);

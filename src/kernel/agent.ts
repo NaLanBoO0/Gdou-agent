@@ -18,6 +18,7 @@ import { loadSkills } from "../skills/registry.ts";
 import type { Skill } from "../skills/types.ts";
 import { loadSkillTool } from "../tools/load-skill.ts";
 import { delegateTool } from "../tools/delegate.ts";
+import { askUserTool, type AskUserQuestion } from "../tools/ask-user.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
@@ -146,6 +147,16 @@ export interface CreateAgentOptions {
 	 * an unbounded tree into exactly one level of delegation.
 	 */
 	includeDelegate?: boolean;
+	/**
+	 * How this session asks the user a question mid-run.
+	 *
+	 * Omitted, the `ask_user` tool is not mounted and the model can only ask in
+	 * prose (which the user answers in the composer like any other message). A
+	 * caller that has a question channel — the bridge's multi-choice dialog —
+	 * passes a function that transports the questions and resolves with the
+	 * answer text; `execute` holds the run open until then.
+	 */
+	askUser?: (questions: AskUserQuestion[]) => Promise<string>;
 }
 
 /** A tool call the permission gate refused. */
@@ -519,6 +530,14 @@ function assemble(
 	// inherits the same transport — a scripted run stays scripted.
 	if (options.includeDelegate !== false) {
 		allTools.push(delegateTool(cwd, recipe.mode, streamFn));
+	}
+
+	// `ask_user` is optional on purpose: it needs a question channel to talk to,
+	// and a session without one should not advertise a tool that hangs forever.
+	// Mounted here, next to `delegate`, because it is the same kind of
+	// environment-provided capability — not a mode tool the expert narrows.
+	if (options.askUser) {
+		allTools.push(askUserTool(options.askUser));
 	}
 
 	// MCP tools ride along like `load_skill` and `delegate`: they are not a mode

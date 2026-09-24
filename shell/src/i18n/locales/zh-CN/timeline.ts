@@ -124,6 +124,8 @@ export const timeline = {
     screenshots: "截图",
     screenshotCount: "{count} 张截图",
     screenshotAlt: "页面截图 {index}",
+    /** MCP 外部工具徽标 */
+    mcpToolHint: "外部工具 · {server}（MCP）",
   },
   /** 工具摘要行（按类型分组的 chip 文案） */
   toolSummary: {

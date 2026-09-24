@@ -1770,29 +1770,50 @@ async function checkMcp(): Promise<void> {
 	}
 
 	// 4. Mounted on a session: a session built in a dir with a configured server
-	//    carries `mcp__<server>__<tool>` tools.
+	//    carries `mcp__<server>__<tool>` tools. I4 approval gates the spawn:
+	//    approve the server first, then it connects and its tools mount.
+	const { approveMcpServer, isMcpServerApproved } = await import("../src/mcp/approval.ts");
+	const { mcpApprovalPath } = await import("../src/mcp/approval.ts");
+	rmSync(mcpApprovalPath(), { force: true });
+	check("an unapproved server is not approved", !isMcpServerApproved("smoke"));
 	const mcpCwd = mkdtempSync(join(tmpdir(), "gdou-mcp-session-"));
 	writeFileSync(
 		join(mcpCwd, ".mcp.json"),
 		JSON.stringify({ smoke: { command: process.execPath, args: [serverScript] } }),
 	);
+	approveMcpServer("smoke");
+	check("an approved server is approved", isMcpServerApproved("smoke"));
 	const session = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: mcpCwd });
 	const sessionNames = session.tools.map((tool) => tool.name);
 	check("MCP tools mount with a server prefix", sessionNames.some((n) => n.startsWith("mcp__smoke__")), sessionNames.filter((n) => n.startsWith("mcp__")).join(","));
 	check("the mounted tool is callable", (await session.tools.find((t) => t.name === "mcp__smoke__echo")?.execute("x", { text: "mounted" }))?.content[0]?.type === "text");
 	session.dispose();
+	// I4: an unapproved server must not spawn — it is reported in mcpErrors.
+	const unauthCwd = mkdtempSync(join(tmpdir(), "gdou-mcp-unauth-"));
+	writeFileSync(
+		join(unauthCwd, ".mcp.json"),
+		JSON.stringify({ smoke: { command: process.execPath, args: [serverScript] } }),
+	);
+	rmSync(mcpApprovalPath(), { force: true });
+	const unauthSession = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: unauthCwd });
+	check("an unapproved server is gated (reported, not spawned)", Object.keys(unauthSession.mcpErrors).includes("smoke"), JSON.stringify(unauthSession.mcpErrors));
+	check("a gated server's tools do not mount", !unauthSession.tools.some((t) => t.name.startsWith("mcp__smoke__")));
+	unauthSession.dispose();
 
 	// 5. A broken server is reported, not fatal.
 	const badDir = mkdtempSync(join(tmpdir(), "gdou-mcp-bad-"));
 	writeFileSync(join(badDir, ".mcp.json"), JSON.stringify({ bad: { command: "definitely-not-a-real-command-xyz" } }));
+	approveMcpServer("bad");
 	const badSession = await createAgent({ recipe: { mode: "coding" }, model: "deepseek/deepseek-flash", settings: {}, cwd: badDir });
 	check("a broken server is reported in mcpErrors", Object.keys(badSession.mcpErrors).includes("bad"), JSON.stringify(badSession.mcpErrors));
 	check("a broken server does not abort the session", badSession.tools.length > 0);
 	badSession.dispose();
+	rmSync(mcpApprovalPath(), { force: true });
 
 	rmSync(configDir, { recursive: true, force: true });
 	rmSync(jsoncDir, { recursive: true, force: true });
 	rmSync(mcpCwd, { recursive: true, force: true });
+	rmSync(unauthCwd, { recursive: true, force: true });
 	rmSync(badDir, { recursive: true, force: true });
 }
 

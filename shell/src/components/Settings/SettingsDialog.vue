@@ -9,8 +9,8 @@ import appPackage from "../../../package.json";
 import { localeOptions, setLocale, type AppLocale } from "../../i18n";
 import { useFocusTrap } from "../../composables/useFocusTrap";
 import {
-  applyCcswitchProvider, getNativeSettings, listCcswitchProviders, setNativeSettings,
-  type CcswitchProvider, type RuntimeSettings,
+  applyCcswitchProvider, approveMcpServer, getNativeSettings, listCcswitchProviders, listMcpServers, setNativeSettings,
+  type CcswitchProvider, type McpServerSummary, type RuntimeSettings,
 } from "../../services/gdou-runtime";
 import {
   MAX_UI_FONT_SIZE, MIN_UI_FONT_SIZE, saveAppearanceSettings,
@@ -60,8 +60,11 @@ const ccswitchError = ref("");
 const ccswitchProviders = ref<CcswitchProvider[]>([]);
 const appVersion = ref(appPackage.version);
 const aboutError = ref("");
+const mcpServers = ref<McpServerSummary[]>([]);
+const mcpLoading = ref(false);
+const mcpApproving = ref<string | null>(null);
+const mcpError = ref("");
 const { setInitialFocus, trapTab } = useFocusTrap();
-
 const fontSizeLabel = computed(() => `${localAppearance.value.fontSize}px`);
 const paragraphSpacingLabel = computed(() => `${localAppearance.value.paragraphSpacing.toFixed(2)}em`);
 const lineHeightLabel = computed(() => `${localAppearance.value.paragraphLineHeight.toFixed(2)}x`);
@@ -79,6 +82,7 @@ onMounted(() => {
   void setInitialFocus(dialog);
   void loadNativeSettings();
   void loadAppVersion();
+  void loadMcpServers();
 });
 
 function close() {
@@ -106,6 +110,31 @@ async function loadNativeSettings() {
     nativeSettingsError.value = "";
   } catch {
     nativeSettingsAvailable.value = false;
+  }
+}
+
+async function loadMcpServers() {
+  mcpLoading.value = true;
+  mcpError.value = "";
+  try {
+    mcpServers.value = await listMcpServers();
+  } catch (reason) {
+    mcpError.value = reason instanceof Error ? reason.message : String(reason);
+  } finally {
+    mcpLoading.value = false;
+  }
+}
+
+async function approveMcp(name: string) {
+  mcpApproving.value = name;
+  mcpError.value = "";
+  try {
+    await approveMcpServer(name);
+    mcpServers.value = mcpServers.value.map((server) => server.name === name ? { ...server, approved: true } : server);
+  } catch (reason) {
+    mcpError.value = reason instanceof Error ? reason.message : String(reason);
+  } finally {
+    mcpApproving.value = null;
   }
 }
 
@@ -637,6 +666,34 @@ function selectLocale(value: AppLocale) {
                   </button>
                 </div>
               </div>
+            </section>
+            <section class="settings-card">
+              <div class="settings-card__heading">
+                <div>
+                  <h3>{{ t('settings.integrations.mcp.title') }}</h3>
+                  <p>{{ t('settings.integrations.mcp.desc') }}</p>
+                </div>
+              </div>
+              <div v-if="mcpLoading" class="form-hint">{{ t('settings.integrations.mcp.loading') }}</div>
+              <p v-else-if="!mcpServers.length" class="form-hint">{{ t('settings.integrations.mcp.empty') }}</p>
+              <div v-else class="mcp-section">
+                <p class="ccswitch-hint">{{ t('settings.integrations.mcp.approvalHint') }}</p>
+                <div class="mcp-list">
+                  <div v-for="server in mcpServers" :key="server.name" class="mcp-item">
+                    <span class="mcp-icon"><AppIcon name="Server" :size="15" /></span>
+                    <div class="mcp-info">
+                      <b>{{ server.name }}</b>
+                      <code>{{ server.command }}</code>
+                    </div>
+                    <span class="status-badge" :class="server.approved ? 'status-badge--online' : ''">{{ server.approved ? t('settings.integrations.mcp.approved') : t('settings.integrations.mcp.pending') }}</span>
+                    <button v-if="!server.approved" type="button" class="btn btn--primary mcp-approve-btn" :disabled="mcpApproving === server.name" @click="approveMcp(server.name)">
+                      <AppIcon v-if="mcpApproving === server.name" name="LoaderCircle" class="spin" :size="13" />
+                      <span v-else>{{ t('settings.integrations.mcp.approve') }}</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div v-if="mcpError" class="form-error" role="alert">{{ mcpError }}</div>
             </section>
           </template>
 
@@ -1715,6 +1772,64 @@ function selectLocale(value: AppLocale) {
 
 .ccswitch-name {
   font-weight: 500;
+}
+
+/* MCP 服务器审批列表 */
+.mcp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mcp-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.mcp-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #7c3aed;
+  background: rgba(124, 58, 237, 0.08);
+  border-radius: 6px;
+}
+
+.mcp-info {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mcp-info b {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-info code {
+  overflow: hidden;
+  color: #8b9096;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-approve-btn {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 0 12px;
+  font-size: 12px;
 }
 
 .spin {

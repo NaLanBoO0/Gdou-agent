@@ -162,6 +162,14 @@ export const app = {
   newWorkspace: "New Workspace",
   openLocalFolder: "Open Local Folder",
 
+  // Experts (methodology narrowing layer)
+  expertAria: "Choose expert",
+  expertNone: "No expert",
+  expertNoneHint: "Run without an expert, using the mode's default tool set",
+  expertHint: "An expert shapes the method and can only narrow the tool set",
+  expertActiveOnSession: "This session uses the expert {name}",
+  expertNarrowed: "Expert {name} narrowed the tool set ({count} tools unavailable)",
+
   // Permission modes
   permissionMode: {
     normal: "Standard approval",

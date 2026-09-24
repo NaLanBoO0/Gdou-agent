@@ -7,6 +7,21 @@
 
 ---
 
+## 0.5 当前版本：方案B（外壳与桥接）
+
+> **2026-09-24 更新。** 本清单的绝大多数条目写于 **Electron GUI 时代**（`renderer/` +
+> `electron/main.ts`，桌面自绘窗口）。此后 GUI 层做了一次彻底重构：**桌面 Electron 界面
+> 下线，前端换成自绘的 Vue 工作台（`shell/`，Vite + Vue3），内核通过 `bridge/` 以
+> JSON-RPC over WebSocket（端口 7438）暴露给 shell。** 内核、模式、工具、专家、技能、
+> MCP 等 `src/` 侧能力全部保留，行为不变；下文的「GUI」条目描述的是老 Electron 实现，
+> 其角色已由 shell 对应组件接替。老文件（`renderer/`、`electron/`）仍在仓库里作为历史
+> 存档，但不再是当前交付物。
+>
+> 方案B 的架构与新增能力见 **2.44 桥接层** 与 **2.45 shell 工作台**。对照总表见第 1 节，
+> 其中 Electron GUI 专属行已标注「随 Electron 下线」。
+
+---
+
 ## 0. 基线：pi 原本给了什么
 
 分清"我们加的"和"pi 给的"，才知道真正的增量在哪。
@@ -39,44 +54,48 @@
 | 8 | headless CLI | `cli.ts` | tagged union 子命令；`--json` 输出事件 JSONL |
 | 9 | **TUI** | `tui/` | 主屏渲染 + 订阅路由 + 全局按键层 |
 | 10 | 离线验证套件 | `scripts/smoke.ts`、`scripts/tui-check.ts` | 假终端录制 + `fauxProvider()` 脚本化模型 |
-| 11 | **桌面 GUI** | `electron/`、`renderer/` | 内核跑在主进程内；IPC 送探测结果；渲染进程零构建 |
-| 12 | **可分发构建 + 安装包** | `scripts/build.mjs`、`electron-builder.yml` | esbuild 把 pi 源码内联成单文件；electron-builder 出 NSIS |
-| 13 | GUI 离屏自检 | `scripts/gui-check.mjs` | 从外部启动真应用，用 CDP 把渲染后的 DOM 读回来断言 |
+| 11 | **桌面 GUI** ⚠️ 随 Electron 下线 | `electron/`、`renderer/` | 内核跑在主进程内；IPC 送探测结果；渲染进程零构建。当前交付物是 shell（见 2.45） |
+| 12 | **可分发构建 + 安装包** ⚠️ 随 Electron 下线 | `scripts/build.mjs`、`electron-builder.yml` | esbuild 把 pi 源码内联成单文件；electron-builder 出 NSIS。当前以 `npm run dev:shell` 双进程形态运行 |
+| 13 | GUI 离屏自检 ⚠️ 随 Electron 下线 | `scripts/gui-check.mjs` | 从外部启动真应用，用 CDP 把渲染后的 DOM 读回来断言。shell 侧由构建期 `vite build` + 手动验证覆盖 |
 | 14 | 工具链目录隔离 | `package.json` 的 `piConfig`、`kernel/toolchain.ts` | 把 pi 下载 rg/fd 的位置从 `~/.pi` 挪到自己的 home |
-| 15 | **随包分发 rg / fd** | `scripts/fetch-tools.mjs`、`kernel/toolchain.ts`、`electron-builder.yml` | 固定版本抓取 + 首启投放到 pi 会先查找的位置，免联网 |
+| 15 | **随包分发 rg / fd** | `scripts/fetch-tools.mjs`、`kernel/toolchain.ts` | 固定版本抓取 + 首启投放；bridge 进程内可用（打包形态已不再随 Electron 走） |
 | 16 | 工具级自检 | `scripts/tool-check.ts` | 真跑 grep/find/ls/read 对固定夹具，验证工具离线可用 |
-| 17 | **对话界面** | `renderer/` | 事件驱动的消息流；流式文本、可折叠工具块；刻意零构建 |
+| 17 | **对话界面** | `shell/`（Vue 工作台） | 事件驱动的消息流；流式文本、可折叠工具块；原 `renderer/` 版本随 Electron 下线 |
 | 18 | 脚本化运行 | `kernel/demo.ts` | fauxProvider 回放固定脚本，无凭据也能跑完整一轮 |
-| 19 | **会话持久化与多会话** | `kernel/sessions.ts`、`kernel/events.ts` 的 `replay()` | 一段对话一个文件，两行 JSON（摘要 + 记录）；重启恢复；历史列表可切换、删除 |
-| 20 | 工作目录选择 | `electron/main.ts`、`renderer/` | 系统目录对话框 + 持久化 + 会话重建；界面靠广播同步 |
+| 19 | **会话持久化与多会话** | `kernel/sessions.ts`、`bridge/server.ts` | 一段对话一个文件，两行 JSON（摘要 + 记录）；重启恢复；历史列表可切换、删除；bridge 每次 run 后落盘、重启后自动从磁盘重建 |
+| 20 | 工作目录选择 ⚠️ 随 Electron 下线 | `electron/main.ts`、`renderer/` | 系统目录对话框 + 持久化 + 会话重建；界面靠广播同步。当前工作目录在启动时确定（`process.cwd()`） |
 | 21 | **上下文裁剪** | `kernel/context.ts`、`kernel/agent.ts` | 接 pi 的 `transformContext`，只裁发给模型的，不动记录 |
-| 22 | 裁剪告知 | `kernel/events.ts` 的 `notice`、`renderer/` | 跨越预算时发一次提示；克制但看得见，不按错误样式 |
-| 23 | 常驻上下文指示器 | `kernel/context.ts`、`kernel/agent.ts`、`renderer/` | 记录上次实际发送的量，仅在裁剪生效时出现在状态行 |
-| 24 | 预览入口 | `electron/main.ts`、`renderer/` | 会话启动失败时提供按钮；预览从空白开始且不落盘 |
-| 25 | 会话重命名 | `kernel/sessions.ts`、`renderer/` | 行内编辑；重写整个文件（标题在摘要行和记录行都有）；空名被拒绝 |
+| 22 | 裁剪告知 | `kernel/events.ts` 的 `notice` | 跨越预算时发一次提示；克制但看得见，不按错误样式 |
+| 23 | 常驻上下文指示器 | `kernel/context.ts`、`kernel/agent.ts`、`shell/` | 记录上次实际发送的量；shell 的 SessionStatsLine 显示上下文占用条 |
+| 24 | 预览入口 ⚠️ 随 Electron 下线 | `electron/main.ts`、`renderer/` | 会话启动失败时提供按钮；预览从空白开始且不落盘。当前无此交互 |
+| 25 | 会话重命名 | `kernel/sessions.ts`、`shell/` | 行内编辑；重写整个文件（标题在摘要行和记录行都有）；空名被拒绝 |
 | 26 | pi 能力接线补全 | `kernel/agent.ts`、`config/settings.ts` | 设置真正生效；重试注入；缓存会话亲和；thinkingBudgets 透传 |
 | 27 | **pi 源码 vendoring** | `vendor/pi/`、`scripts/vendor-pi.mjs`、`scripts/check-vendor.mjs` | 按依赖闭包拷入 6 个包（701 文件）+ sha256 清单；只读校验；外部依赖按 pi 的精确版本装进本项目 |
-| 28 | **组合模型 + 专家** | `kernel/recipe.ts`、`experts/` | 会话 = 模式 + 专家；专家**只能收窄**工具集；markdown 三级加载；渐进式披露的前置 |
-| 29 | **工作台外壳** | `renderer/`（tokens/shell/chat/panels 四个 CSS）、`electron/main.ts` | 冷灰中性设计语言：52px 自绘标题栏 + 240px 侧栏 + 主区；无边框窗口；右侧检查器；深浅两套主题 |
+| 28 | **组合模型 + 专家** | `kernel/recipe.ts`、`experts/`、`bridge/server.ts`（`expert.list`）、`shell/`（专家选择器） | 会话 = 模式 + 专家；专家**只能收窄**工具集；markdown 三级加载；shell 在 composer 提供专家选择，会话头显示当前专家与收窄 |
+| 29 | **工作台外壳** | `shell/`（Vue 组件）、`renderer/` ⚠️ | 冷灰中性设计语言；原 52px 标题栏 + 240px 侧栏 + 主区在 Electron 实现，shell 自绘整套工作台 |
 | 30 | **权限门 + 命令检查器** | `kernel/permission.ts`、`kernel/command-guard.ts`、`kernel/agent.ts` | 有序 5 阶段判定链（主轴是路径归属）；凭据禁读也禁写、任何档位不能越过；命令黑名单五类规则；接在 pi 的 `beforeToolCall` 接缝上 |
-| 31 | **产物交付** | `tools/present.ts`、`electron/main.ts`（预览通道）、`renderer/` | `present_files` 只收绝对路径且全有或全无；产物渲染成卡片；检查器可预览（HTML 走全沙箱 iframe）；预览通道只放行本会话交付过的路径 |
-| 32 | 单实例锁 | `electron/main.ts` | 第二个实例直接退出并把已有窗口拉到前台；两个实例会抢同一批会话文件 |
+| 31 | **产物交付** | `tools/present.ts`、`shell/` | `present_files` 只收绝对路径且全有或全无；产物渲染成卡片；shell 侧 artifact 面板展示 |
+| 32 | 单实例锁 ⚠️ 随 Electron 下线 | `electron/main.ts` | 第二个实例直接退出并把已有窗口拉到前台。当前双进程（bridge + shell）形态天然单实例 |
 | 33 | **联网** | `tools/web-fetch.ts`、`tools/web-search.ts`、`tools/net-guard.ts` | `web_fetch` 用 readability + linkedom 抽正文（不执行 JS）；`web_search` 走 Brave / Tavily；SSRF 防护在入站与**每一跳重定向**都校验 |
-| 34 | **变更追踪** | `kernel/changes.ts`、`kernel/agent.ts`、`renderer/` | 工具行显示 `+N −M`；`edit` 用 pi 的 diff，`write` 靠调用前快照算真实增减；无法比对时明确标注为近似 |
-| 35 | **工具分组折叠** | `renderer/app.js`、`renderer/chat.css` | 连续 2 个以上工具调用折成一张组卡（组头列工具名 + 调用次数）；运行中保持展开，轮结束时折叠 |
+| 34 | **变更追踪** | `kernel/changes.ts`、`kernel/agent.ts`、`shell/` | 工具行显示 `+N −M`；`edit` 用 pi 的 diff，`write` 靠调用前快照算真实增减；shell 的 EditedFilesCard 展示 |
+| 35 | **工具分组折叠** | `shell/`（ToolCallGroup） | 连续 2 个以上工具调用折成一张组卡（组头列工具名 + 调用次数）；运行中保持展开，轮结束时折叠 |
 | 36 | **模式改成数据** | `profiles/builtin.ts`、`profiles/loader.ts`、`profiles/tool-catalog.ts`、`profiles/registry.ts` | 模式是 markdown：内置走内联字符串，用户级 `~/.gdou-agent/modes/`、项目级 `<cwd>/.gdou-agent/modes/` 三级加载；frontmatter 的工具**名**由工具目录解析成工具，缺 `tools`、未知工具名、空正文都在加载时拒绝 |
 | 37 | **重复调用守卫** | `kernel/loop-guard.ts`、`kernel/agent.ts`、`config/settings.ts` | 同工具同参数**连续**重复超过 N 次（默认 3）即拦下；拦在权限门之后；理由作为 error 工具结果回给模型；`loopRepeatLimit: 0` 关掉 |
-| 38 | **备用模型** | `kernel/fallback.ts`、`kernel/agent.ts`、`config/settings.ts` | 主模型**在产出任何内容之前**失败才切；切换以 `notice` 告知；`fallbackModel` 配置；切前缓冲开场事件，避免记录里留下空消息 |
+| 38 | **备用模型** | `kernel/fallback.ts`、`kernel/agent.ts`、`config/settings.ts`、`shell/`（备用模型选择） | 主模型**在产出任何内容之前**失败才切；切换以 `notice` 告知；`fallbackModel` 配置；shell 的模型菜单可配置备用模型 |
 | 39 | **按模式选模型** | `profiles/types.ts`、`profiles/loader.ts`、`kernel/agent.ts` | 模式文件的 `model:` 是**最低优先级**建议（选项 > 设置 > 模式）；未知 spec 在会话启动时报错并点名模式与文件 |
-| 40 | **模型与凭据** | `kernel/credentials.ts`、`kernel/runtime.ts`、`electron/main.ts`、`renderer/` | 界面里存 API key（`~/.gdou-agent/auth.json`，pi 的格式）；存的 key **压过**环境变量；key **永不跨 IPC** 回渲染层，只有掩码；编写器里模型名变成切换按钮，弹层按服务商分组列模型 |
-| 41 | **启动即新对话 + 修掉模型切不动** | `electron/main.ts`、`renderer/app.js`、`kernel/agent.ts` | 两处：① 桌面版 `startSession` 重建会话时**漏传了 `settings`**，`agent:setModel` 把选择写盘后、重建时内核读的是模式默认而非刚选的值——于是「切模型没反应」，而且 `thinkingLevel`/`permission`/`fallback`/`loopGuard` 全部随之失效（CLI 一直正确传了 `loadSettings()`，只有 Electron 漏了）；② 启动默认进**新对话**而非恢复最近一条，历史在左下角一处点击即可 |
-| 42 | **技能渐进式披露** | `skills/types.ts`、`skills/registry.ts`、`skills/builtin.ts`、`tools/load-skill.ts`、`kernel/agent.ts`、`kernel/recipe.ts` | 技能是「目录 + `SKILL.md` + 可选 `references/`」，三级加载（内置/用户/项目）。会话开始时提示里只有**名字+描述+when_to_use**，正文不注入；模型判断任务匹配后调 `load_skill` 读正文（可附带读一个 reference 文件）。这是三个自定义机制里**唯一真正新的**——几十个技能全文塞进提示就是几十万 token，正好把上下文裁剪省下的预算又花回去 |
-| 43 | **GUI 质感改造** | `renderer/tokens.css`、`renderer/shell.css`、`renderer/chat.css`、`renderer/index.html`、`renderer/app.js` | 侧栏加品牌区（logo 标识 + Beta 徽章）与醒目的**新建对话**主按钮；侧栏**可拖拽调宽**（180–420px，走 `--sidebar-w` CSS 变量，宽度持久化到 localStorage）；对话时间线右侧加**轮次圆点导航**（一点跳转、hover 气泡、上下渐隐遮罩、active 跟随滚动）；补阴影层次 token |
-| 44 | **观测（崩溃/日志/内存）** | `kernel/observability.ts`、`electron/main.ts`、`src/paths.ts` | 三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`：① **崩溃报告**——`uncaughtException`/`unhandledRejection`/`render-process-gone` 同步落盘（异步会丢），单次启动上限 50 条；② **运行日志**——会话启动/模型解析写一行，指纹采样防日志风暴；③ **内存诊断**——heap ≥1.5GB 时写 `process.report`。诊断页加「日志目录」行 |
-| 45 | **子代理（delegate）** | `tools/delegate.ts`、`kernel/agent.ts`、`profiles/builtin.ts` | `delegate` 工具把自包含子任务交给一个**独立上下文**的子代理跑完，返回最终文本。子代理**继承父模式**（不写死 coding，权限面不在用户背后变大）；防递归：`includeDelegate: false` 不含 delegate 本身。**B7 第一个调用点**：`model` 参数可指向 lite 模型。连带把 **general 模式也开放了文件/Shell 工具**——模式从「能力边界」退化成「工作风格」，两个模式主要在提示词上区分 |
-| 46 | **动效（流式光标 + 思考动画）** | `renderer/chat.css`、`renderer/app.js` | 三个动效：① **流式光标**——模型打字时消息末尾竖条闪烁（`token-caret`）；② **思考三点跳动**——thinking 时三个圆点上下跳（`typing-bounce`），思考文本**累积**到同一面板；③ **思考扫光**——thinking 面板一道光带滑过（`thinking-sweep`）。外加消息**淡入上滑**进场、工具卡**运行中紫框/失败红框**状态色 |
-| 47 | **marked 排版 + 工具折叠 + 等待动效** | `renderer/marked.umd.js`、`renderer/app.js`、`renderer/chat.css` | ① **输出排版**——自研 markdown 只支持代码块/加粗，改用 `marked`（vendored 成 `marked.umd.js`），标题/列表/表格/引用/代码高亮全支持；② **工具折叠**——工具调用始终聚合成「正在使用 N 个工具」的折叠卡（运行中三点跳动 + 紫框，结束才落定），不再一个个弹；③ **等待动效**——`run_start` 到首个输出间显示「思考中…」跳动点，模型不思考也不让用户干等 |
-| 48 | **MCP（stdio 客户端）** | `src/mcp/{config,client,schema,tool,index}.ts`、`kernel/agent.ts` | 接 `@modelcontextprotocol/sdk`，把 stdio MCP server 的工具挂成 agent 工具。配置三级作用域（user/project/local）合并 + JSONC 注释 + `${VAR}`/`${VAR:-default}` 扩展；JSON Schema → TypeBox 转换（不支持的关键字宽松降级为 Any）；工具名加 `mcp__<server>__` 前缀防碰撞；broken server 报进 `session.mcpErrors` 而非让会话崩溃 |
+| 40 | **模型与凭据** | `kernel/credentials.ts`、`kernel/runtime.ts`、`shell/`（模型管理） | 界面里存 API key（`~/.gdou-agent/auth.json`，pi 的格式）；存的 key **压过**环境变量；key **永不跨 IPC** 回前端，只有掩码；shell 的模型菜单按服务商分组列模型 |
+| 41 | **启动即新对话 + 修掉模型切不动** ⚠️ 随 Electron 下线 | `electron/main.ts`、`renderer/app.js`、`kernel/agent.ts` | 桌面版的两处修复；shell 侧启动默认进新建任务页 |
+| 42 | **技能渐进式披露** | `skills/types.ts`、`skills/registry.ts`、`skills/builtin.ts`、`tools/load-skill.ts`、`kernel/agent.ts`、`kernel/recipe.ts`、`shell/`（技能中心） | 技能是「目录 + `SKILL.md` + 可选 `references/`」，三级加载（内置/用户/项目）。会话开始时提示里只有**名字+描述+when_to_use**，正文不注入；模型判断任务匹配后调 `load_skill` 读正文（可附带读一个 reference 文件） |
+| 43 | **GUI 质感改造** ⚠️ 随 Electron 下线 | `renderer/tokens.css`、`renderer/shell.css`、`renderer/chat.css`、`renderer/index.html`、`renderer/app.js` | 侧栏品牌区、可拖拽宽度、轮次圆点导航等质感，shell 侧重新实现 |
+| 44 | **观测（崩溃/日志/内存）** | `kernel/observability.ts`、`src/paths.ts` | 三件「出问题能拿到线索」的事，全落在 `~/.gdou-agent/logs/`：崩溃报告、运行日志、内存诊断 |
+| 45 | **子代理（delegate）** | `tools/delegate.ts`、`kernel/agent.ts`、`profiles/builtin.ts` | `delegate` 工具把自包含子任务交给一个**独立上下文**的子代理跑完，返回最终文本。子代理**继承父模式**（不写死 coding，权限面不在用户背后变大）；防递归：`includeDelegate: false` 不含 delegate 本身。**B7 第一个调用点**：`model` 参数可指向 lite 模型。连带把 **general 模式也开放了文件/Shell 工具** |
+| 46 | **动效（流式光标 + 思考动画）** ⚠️ 随 Electron 下线 | `renderer/chat.css`、`renderer/app.js` | 流式光标、思考三点跳动、思考扫光等动效在 Electron 渲染层实现；shell 有自己的一套动效 |
+| 47 | **marked 排版 + 工具折叠 + 等待动效** ⚠️ 随 Electron 下线 | `renderer/marked.umd.js`、`renderer/app.js`、`renderer/chat.css` | 输出排版/工具折叠/等待动效；shell 用 marked 做排版、自己实现工具折叠与等待动效 |
+| 48 | **MCP（stdio 客户端）** | `src/mcp/{config,client,schema,tool,index,approval}.ts`、`kernel/agent.ts`、`shell/`（设置页审批） | 接 `@modelcontextprotocol/sdk`，把 stdio MCP server 的工具挂成 agent 工具。配置三级作用域合并 + JSONC 注释 + `${VAR}` 扩展；工具名加 `mcp__<server>__` 前缀；broken server 报进 `session.mcpErrors`。**I4 审批已实现**：首次连接需用户批准（见 2.43） |
+| 49 | **桥接层（方案B）** | `bridge/server.ts` | JSON-RPC over WebSocket（7438），57 个方法把内核能力映射给 shell；事件翻译、会话持久化、断线后自动重建；诚实拒绝未实现能力（见 2.44） |
+| 50 | **shell 工作台（方案B）** | `shell/`（Vite + Vue3） | 自绘桌面工作台：会话、时间线、检查器、技能中心、自动化页、源码控制；专家选择、备用模型、MCP 徽标（见 2.45） |
+| 51 | **自动化（定时任务）** | `src/automation/schedule.ts`、`bridge/server.ts` | 配方 + 提示词 + 触发时机；运行时触发（桥进程存活期间）；产出单独概念不混入历史；无人值守默认 read-only（见 2.46） |
+| 52 | **提问机制（ask_user）** | `src/tools/ask-user.ts`、`kernel/agent.ts`、`bridge/server.ts` | 模型调用 `ask_user` 向用户提出结构化问题；run 挂起等回答；shell 弹多选/多选弹窗（见 2.47） |
 
 ---
 
@@ -1495,6 +1514,94 @@ thinking 内容、看不到「思考过程」动效。用户选择**只做等待
 不依赖 SDK server 端）测 client 的 listTools/callTool、config 的 JSONC/env 扩展、schema 转换、
 工具挂载、坏 server 报错不致命。`build` 通过（bundle 6.0→6.6 MB，SDK 引入）。
 
+**I4 审批（2026-09-24 落地）**：MCP server 首次连接现在需要用户批准，因为连接就是
+spawn 一个第三方进程。审批状态存在 `~/.gdou-agent/mcp-approvals.json`（`src/mcp/approval.ts`），
+`connectMcp` 只连接已批准的 server，未批准的记入 `mcpErrors`（"待用户批准"）而不是静默跳过。
+桥端新增 `mcp.list`（列出配置 server + 批准状态 + 命令）与 `mcp.approve`；shell 设置页
+「连接 → MCP 服务器」卡片逐台列出、一键批准。smoke 增加 4 条审批门断言（未批准不挂载 /
+已批准挂载 / 门禁报告 / 坏 server 不致命）。
+
+---
+
+### 2.44 桥接层（方案B）
+
+**为什么把内核和 GUI 拆成两个进程**：内核是 pi + 自研装配，纯 TypeScript 服务；GUI 需要
+现代前端生态（Vue、Vite、组件库），两者技术栈完全不同，焊在一个进程里只能互相拖累。
+方案B 让 shell 是自绘桌面工作台（`shell/`，Vite dev server 5173），内核通过 `bridge/`
+以 JSON-RPC over WebSocket（`ws://127.0.0.1:7438`）暴露给它。
+
+**桥是薄映射层，不是二道实现**：`bridge/server.ts` 把内核能力翻译成 shell 的 57 个方法，
+事件流按一张翻译表归一（`run_start → run.started`、`text_delta → llm.token`、
+`tool_start/end → tool.call_started/finished` 等）。**诚实原则**是桥的底线：
+
+- **没有的能力诚实拒绝**：`NOT_IMPLEMENTED` 表给每个未实现方法一条中文说明（如
+  "插件市场尚未实现：这里没有插件体系，扩展能力走技能与 MCP"），前端原样显示，
+  绝不为了"看起来有"而捏造空结果。
+- **只读批量列表返回空结构不 reject**：shell 用 `Promise.all` 并行拉取
+  workspace/session/settings/status，一个方法 reject 会拖垮整页；能给出"空"的地方给空，
+  给不了的地方明确报错。
+- **字段没有诚实对应就报稳定值并注释**：shell 类型要求 `provider: "anthropic"|"openai"`，
+  我们的 provider 是 deepseek/moonshot 等，桥报 `"openai"`（多数走 OpenAI 线协议）并在
+  每个字段旁注明这是适配妥协。
+- **凭据认定不看环境变量只看存储**：`has_api_key` / `api_key_configured` 都查
+  `~/.gdou-agent/auth.json`（含 `presetsWithCredentials`），否则"刚在设置页存的 key 没生效"
+  会再次出现。
+
+**会话持久化 + 自动恢复**：每次 run 结束桥把会话落盘（`session.create` 即落盘，
+`send_message` 跑完落盘）；桥重启后 shell 再发消息时，桥从磁盘重建会话（用当前配置，
+脚本化预览自动变真实会话）。**断线自动重连**：shell 的 WebSocket 断开后指数退避重连，
+桥回来即恢复（t2 实测：杀桥 → 状态变「未连接」→ 重启桥 → 12 秒内自动恢复「已连接」）。
+
+**新增方法**（阶段3，2026-09-24）：`expert.list`（专家目录）、`mcp.list` / `mcp.approve`
+（I4 审批）、`settings.update` 支持 `fallback_model`、`session.create` 接受 `expert` 并返回
+`unavailable_tools`、`session.get_history` 返回 `expert`。
+
+### 2.45 shell 工作台（方案B）
+
+`shell/`（Vite + Vue3）是当前唯一的 GUI。它把内核能力呈现成一张自绘桌面工作台：
+会话列表、对话时间线、右侧检查器（文件/工作区/上下文）、技能中心、自动化页、源码控制页、
+设置对话框。事件流驱动消息渲染，`ExecutionTimeline` 负责时间线，`SessionStatsLine` 显示
+上下文占用条（80% 警示 / 95% 告急 + 进度条）。
+
+**阶段3 补的独有能力 UI**（2026-09-24，对照 FEATURES 各章节逐项核对）：
+
+- **MCP 工具徽标**（2.43）：`ToolCallCard` 识别 `mcp__<server>__<tool>` 前缀，紫色徽标
+  显示 server 名，action/detail 剥掉前缀只留工具短名；`provider.status.mcp_servers` 报真实
+  配置（approved/pending）。
+- **专家选择 + 收窄指示**（2.28）：composer 工具栏加专家下拉（`expert.list` 数据）；
+  会话创建把专家带给桥端，桥端按配方装配；会话头显示当前专家徽标；创建响应带回
+  `unavailable_tools` 供前端提示"为什么工具变少了"。
+- **备用模型配置**（2.33）：模型选择弹层加"备用模型"下拉，写 `settings.fallback_model`；
+  切换时内核 `notice` 已通过 `log.line` 展示。
+- **变更追踪**（2.29）与**上下文指示器**（2.21）在 shell 原本就有（EditedFilesCard /
+  SessionStatsLine），本轮确认无缺口。
+
+### 2.46 自动化（定时任务）
+
+shell 的自动化页（AutomationPage）原本只有 UI，桥端 `schedule.*` 全部诚实拒绝
+（"内核还没有自动化调度能力"）。本轮（2026-09-24）把机制补齐：
+
+- **存储**：`src/automation/schedule.ts`，任务存 `~/.gdou-agent/automations.json`，
+  原子写（temp + rename），到期计算只在保存时做一次，`dueTasks()` 只比 ISO 时间戳。
+- **桥端方法**：`schedule.list/create/update/pause/run/delete` 全实现；`schedule.run`
+  立即异步触发一次，`last_result` 记到任务上。
+- **运行时触发**：桥进程内 `setInterval`（60s）检查 `dueTasks()` 触发到点任务——
+  **只做运行时触发**，关掉程序就不跑（界面文案明说）。
+- **产出单独概念**：自动化运行不进入会话历史，结果（`last_run_at` / `last_result`）
+  记在任务上。
+- **无人值守默认 read-only**：`runAutomation` 用 `{ tier: "read-only", approval: "never" }`
+  装配——"不问"必须等于"不做"，这和「专家只能收窄」是同一条原则。
+
+### 2.47 提问机制（ask_user）
+
+内核新增 `ask_user` 工具（`src/tools/ask-user.ts`）：模型需要用户做决定时调用它，
+传一组结构化问题（header/question/options/multi_select），`execute` **挂起 run** 等回答。
+桥端持有 `pendingQuestions` map，收到工具调用即向 shell 推 `question.requested` 事件，
+shell 弹多选/多选弹窗；用户回答后 `question.respond` 带回答案，桥端 resolve 挂起的
+promise，答案作为工具结果文本回到模型，run 继续。`question.pending` 供刷新/重连后
+恢复弹窗。真实模型闭环实测通过（2026-09-24）：模型问"选 A 还是 B" → shell 弹窗 →
+回答「方案 A」 → 模型收到并继续。
+
 ---
 
 ## 3. 刻意不做的事
@@ -1505,7 +1612,8 @@ thinking 内容、看不到「思考过程」动效。用户选择**只做等待
 | 重写 pi 的内置工具 | 它们已处理好截断、变更排队、二进制检测、ripgrep 集成 |
 | 备用屏 TUI | 会牺牲原生 scrollback / 搜索 / 复制 |
 | 自己的 provider 抽象 | pi-ai 的 41 个 provider 已经可用，加一层只是转手 |
-| MCP 支持 | pi 本身没有内置 MCP，需要扩展桥接。排在第三梯队，且必须在权限层之后 |
+| 插件市场 | 本项目没有插件体系；扩展能力走技能与 MCP（桥端 `plugin.*` 诚实拒绝） |
+| Electron 安装包 | 随方案B 下线；当前形态是 bridge + shell 双进程，需要安装包时再恢复打包链路 |
 
 ---
 
@@ -1653,40 +1761,43 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
 
 ## 5. 现状
 
-**已完成并验证**：内核、模式系统、工具、CLI、TUI、离线验证套件、桌面 GUI、可分发构建与安装包、工具链目录隔离、**pi 源码 vendoring**、**组合模型 + 专家**、**工作台外壳**、**模式改成数据**、**重复调用守卫 / 备用模型 / 按模式选模型**。
+**内核层已完成并验证**：模式系统、工具、CLI、TUI、离线验证套件、工具链目录隔离、
+**pi 源码 vendoring**、**组合模型 + 专家**、**模式改成数据**、**重复调用守卫 / 备用模型 /
+按模式选模型**、**权限门 + 命令检查器**、**技能渐进式披露**、**子代理**、**MCP（含 I4 审批）**、
+**提问机制（ask_user）**、**自动化（定时任务）**。
 
-- `typecheck` 干净；`check:vendor`、`smoke`、`check:tui`、`check:tools`、`check:gui` 全通过（`npm run check` 一次跑完前四个）
-- **项目已自持**：pi 源码在 `vendor/pi`，工具链（`tsx`、`tsgo`）在本项目 `node_modules`，`package.json` 里没有任何路径指回 `../pi-main`。产物里 `pi-main` 出现 0 次、`vendor/pi` 出现 345 次
-- `vendor:pi` 重跑幂等：701 文件重拷后 `check:vendor` 仍 701/701，且手写的 `vendor/pi/README.md` 不被删除（脚本只删它自己管的条目）
-- `npm run build` 835 ms 出全部产物，零警告
-- `npm run smoke` 增加 **25 条上下文断言**：裁剪的不变量（见 2.19，含**预算小于一轮时仍然裁剪**这条回归守卫）、**超预算时发出一次 notice**、notice 措辞正确、**连跑两轮只发一次**、**`the transcript still holds everything`（25 → 28）——证明裁剪没有动记录**、`contextStatus()` 在首次请求前是 undefined、每次运行后跟随更新、最后一次与实际一致
-- `npm run smoke` 另外增加 **37 条专家断言**（总数 52 → **89**）：收窄、**不能扩大**、空交集、提示词拼接、装配结果、`thinkingLevel` 优先级、未知 id 报错、以及项目级文件的发现/覆盖/报错/非 markdown 忽略。文件相关的断言跑在临时目录上，不碰用户真实数据
-- **组合模型落地**：`SessionRecipe { mode, expert? }`；工具集取**交集**（专家只能做减法，安全属性）；专家三级加载（项目级 > 用户级 > 内置），内置的也走同一套 markdown 解析；`--list-experts` / `--expert` / `--list-tools -e` 可用；doctor 显示解析后的配方；会话记录带上 expert，恢复时按完整配方校验
-- `npm run check:tools` 12 项通过：真跑 grep / find / ls / read 对固定夹具，不联网
-- `npm run smoke` 再增加 **35 条模式断言**（总数 191 → **226**）：内置只有两个（对**受控的用户目录**断言，不依赖真实 `~/.gdou-agent`）、工具目录覆盖 pi 与本项目的工具、模式正文与 frontmatter 不串、**文件里的工具按文件里的顺序解析**、项目级盖用户级且不重复、`tools: []` 合法、未知工具名/缺 `tools`/空正文三种拒绝、坏文件不拖垮目录、未知 id 的报错带上坏文件。见 2.31
-- `npm run smoke` 再增加 **55 条**（总数 226 → **281**）：20 条重复调用守卫（含**盲区本身也被断言**，以及一条端到端——真会话里连发 4 次 `current_time`，第 3 次以 error 工具结果回到模型）、26 条备用模型（三条必须终止的路径 + 两条边界 + **失败的 `start` 没有被转发**）、10 条按模式选模型。见 2.32 / 2.33 / 2.34
-- `npm run check:gui` **164/164 通过**。新增的第 164 条断言检查器**在没有备用模型时也显示「备用模型：无」**——一行缺席是看不见的，读者分不清「没配」和「这个版本没这个功能」
-- **`smoke` 里有一条会按环境跳过**：模式不指定模型时落到环境默认，这条只在有 key 的机器上跑。新克隆的仓库正好是没 key 的状态，**让自检在那种情况下变红是错的**
-- `npm run check:gui` **163/163 通过**。其中「模式开关有两个按钮」改成**和选择器对账**（数量与顺序都一致），不再写死 2——模式现在是用户能加的文件，写死会让**项目自己定义模式的人跑不过自检**。修掉 4.10 的 `ELECTRON_RUN_AS_NODE` 泄漏之后，`npm run build && npm run check:gui` 连跑 3 次全通过（修复前这个组合 3/3 必挂）。它从外部启动真实应用（`electron .`），用 CDP 驱动**一轮对话 + 一次重启 + 一次换目录 + 一次多会话往返 + 一次裁剪 + 一次改名 + 一次切换专家 + 一次外壳巡检 + 一次无凭据预览**：发消息 → 等运行结束 → 读回 DOM → 断言落盘（含摘要行独立可用）→ 关掉应用 → 重新启动 → 断言对话完整恢复 → **压低预算再发一轮 → 断言提示出现且措辞正确、常驻指示器出现且数字是真实的分裂、同时界面上仍留着模型看不到的轮次** → 换工作目录 → 断言会话按新目录重建且设置落盘 → 开新对话 → **断言旧对话仍在** → 再跑一轮 → 断言两条都在列表里且标题取自用户消息 → 打开历史菜单 → 切回旧对话 → 断言恢复的是它自己的内容 → 删除一条 → 断言文件与列表同步 → **行内改名 → 断言空名被忽略、菜单显示新名、且新名确实落到了磁盘上的摘要行（通过重新 listSessions 证明，而不是只看菜单重画）、对话内容不受影响** → **第三次启动，故意不带脚本化环境变量 → 断言启动失败被如实报告、预览按钮出现、点进去真能跑一轮、状态行标明脚本化、且预览没有写进历史** → 最后打开诊断面板检查内核状态。它跑在临时 `GDOU_AGENT_HOME` 上，所以绝不会读到或毁掉真实用户的对话
-- 打包后的 `GDOU-agent.exe` 实测启动成功：跑完整轮对话、重启恢复、切换工作目录、开新对话且旧对话保留
-- 工具链目录已隔离：`~/.gdou-agent/agent/bin`，不再污染 `~/.pi`
-- **全新机器场景实测通过**：删掉 `~/.gdou-agent/agent` 再安装启动，应用从 `resources/bin` 自举投放 rg + fd，工具随即可用
-- 安装包 `release/GDOU-agent-0.1.0-setup.exe` 118 MB（含两个二进制），PE 头合法
-- **完整链路实测通过**：构建 → 打包 → 静默安装 → 启动 → 对话 → 工具执行 → 重启恢复 → 换目录
+**GUI 层现状（2026-09-24）**：Electron 桌面版**已下线**，当前交付物是 **shell（Vue3 + Vite）
++ bridge（JSON-RPC over WebSocket 7438）** 双进程形态（`npm run dev:shell` 一起启动）。
+`renderer/`、`electron/` 仍在仓库作为历史存档，不再是交付物；`check:gui`（离屏自检）、
+`scripts/build.mjs` 打包链路、`electron-builder.yml` 随 Electron 一起退役。
+
+- `typecheck` 干净；`check:vendor`、`smoke`、`check:tui`、`check:tools` 全通过（`npm run check` 一次跑完）
+- **项目已自持**：pi 源码在 `vendor/pi`，工具链（`tsx`、`tsgo`）在本项目 `node_modules`，`package.json` 里没有任何路径指回 `../pi-main`
+- `vendor:pi` 重跑幂等：701 文件重拷后 `check:vendor` 仍 701/701
+- `npm run smoke` **281+ 条断言**：上下文裁剪、专家收窄、模式数据、重复调用守卫、备用模型、
+  按模式选模型、MCP 客户端与配置、以及本轮新增的 **MCP 审批门 4 条**（未批准不挂载 /
+  已批准挂载 / 门禁报告 / 坏 server 不致命）
+- **桥接层**（方案B）是当前 GUI 的全部后端：57 个方法映射内核能力，事件翻译、会话持久化
+  （每次 run 落盘、桥重启自动重建）、断线自动重连（指数退避，实测杀桥后 12 秒内恢复）
+- **阶段3 独有能力 UI**（2026-09-24）：MCP 工具徽标（紫色 server 徽标）、专家选择器 +
+  会话头专家徽标、备用模型配置下拉、上下文占用条（SessionStatsLine）、变更追踪
+  （EditedFilesCard）——对照第 1 节总表逐项核对，Electron 专属行已标注下线
+- **自动化**（2026-09-24）：`src/automation/schedule.ts` + 桥端 `schedule.*` 全实现 +
+  运行时 60s 调度器；无人值守 read-only；实测 CRUD/pause/run/delete 通过
+- **提问机制**（2026-09-24）：内核 `ask_user` 工具 + 桥端 question 通道；真实模型闭环
+  实测通过（模型提问 → shell 弹窗 → 回答 → 模型继续）
 
 **未验证**：
 
-1. **系统目录对话框本身**。它是模态的，没有可脚本化的接口，所以只能把逻辑拆出来测（见 2.18）。对话框弹出、选择、取消这三个动作需要你手动点一次。
-2. **真实终端里的 TUI 交互**。开发环境没有 TTY，渲染靠录制终端验证，键盘靠模拟按键验证。
-3. **GUI 的实际观感**。断言读的是 DOM 文本和布局属性，不是截图。
-4. **接真实 provider 的对话**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。
-5. **非 Windows 平台**。抓取脚本只钉了 win32-x64 的资产，其他平台会明确报错而不是装错二进制。
-6. ~~vendoring 之后的重新打包~~ —— **已解决（2026-09-23）**。见 4.7：失败的是校验文件而不是二进制，两个镜像环境变量设上之后 `npm run package:dir` 完整跑通，产物在 `release/win-unpacked`（`app.asar` 94.8 MB，`resources/bin` 带 rg / fd）。
-
-   打包产物**已实测**：用 `--remote-debugging-port` 启动 `release/win-unpacked/GDOU-agent.exe`，读回 DOM 确认 `.gdou-shell`、`.sidebar`、`#inspector`、`.titlebar` 与四个导航视图（chat / experts / automation / skills）都在。这一点必须单独验：`check:gui` 驱动的是源码态的 `electron .`，它证明不了 `app.asar` 里那份 bundle——而桌面快捷方式启动的恰恰是后者。
+1. **真实终端里的 TUI 交互**。开发环境没有 TTY，渲染靠录制终端验证，键盘靠模拟按键验证。
+2. **接真实 provider 的对话**。`smoke` 只在有 key 的机器上跑真实请求；新克隆仓库无 key 时
+   相关断言按环境跳过。真实 429 / 502 的错误形状仍需真实 key 复验。
+3. **非 Windows 平台**。抓取脚本只钉了 win32-x64 的资产，其他平台会明确报错而不是装错二进制。
+4. **shell 的实际观感**。断言读的是 DOM 文本和布局属性，不是截图。
 
 **下一步**：
 
-1. **接真实 provider 跑一轮**。所有对话验证都跑在脚本化运行上，没有用真实 key 发过一次请求。这一条需要你的 key，我没法自己完成。**备用模型（2.33）落地之后这一条更值钱了**：它正是「provider 抖一下整轮就没了」那个场景的解法，而脚本化运行永远复现不出真实的 429 / 502 —— `check:` 系列里的失败都是**我们自己合成**的，合成的失败证明了转发逻辑对，证明不了真实 provider 的错误形状对得上。
-2. **skills**（下一个）。渐进式披露是三个功能里唯一真正新的机制：会话开始时上下文里只有每个 skill 的**名字 + 一句话描述**，任务匹配后 agent 才调用 `load_skill` 把正文读进来。不这么做的话，几十个 skill 全文塞进系统提示就是几十万 token——正好把 2.19 的上下文裁剪省下来的预算又花回去。组合模型（2.23）已经把它要挂的位置留好了。按你的决定：**只允许说明和资源文件，不允许可执行脚本**（否则"安装一个 skill"就等于"安装一段可执行代码"）。
-3. **自动化**。它本身就是「配方 + 提示词 + 触发时机」，前两样（组合模型、提示词）现在都在了。按你的决定：**只做运行时触发**（关掉程序就不跑，界面要明说），产出**单独一个概念**而不是混进历史。安全上 `allowWrite` 默认 false——无人值守的工具调用就是远程代码执行面，这和「专家只能收窄」是同一条原则。
+1. **真实 provider 上验证备用模型**（2.33）。它正是「provider 抖一下整轮就没了」那个场景的
+   解法，而脚本化运行永远复现不出真实的 429 / 502。
+2. **插件体系**（如有需要）。桥端当前诚实拒绝 `plugin.*`——本项目没有插件体系，
+   扩展能力走技能与 MCP；若将来要插件市场，从桥端的 `plugin.*` 方法开始。

@@ -67,6 +67,12 @@ export const model = {
   loading: "正在加载模型",
   empty: "暂无模型配置",
   manage: "添加和管理模型",
+  /** 备用模型：主模型在产出任何内容前失败时切换 */
+  fallbackLabel: "备用模型",
+  fallbackHint: "主模型失败时自动切换的救援模型；仅在产出内容前失败才切换",
+  fallbackNone: "无",
+  fallbackSaveFailed: "备用模型保存失败，请重试。",
+  fallbackSaving: "保存中",
   icon: {
     sparkles: "闪光",
     bot: "机器人",

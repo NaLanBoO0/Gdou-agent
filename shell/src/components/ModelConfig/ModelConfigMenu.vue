@@ -33,6 +33,29 @@ const reasoningEffort = ref<RuntimeSettings["reasoning_effort"]>(props.settings?
 const savingReasoning = ref(false);
 const reasoningApplied = ref(false);
 const busy = computed(() => loading.value || Boolean(selecting.value) || savingReasoning.value);
+const fallbackModel = ref(props.settings?.fallback_model ?? "");
+const savingFallback = ref(false);
+const fallbackApplied = ref(false);
+
+async function applyFallback(value: string) {
+  if (busy.value || !props.settings) return;
+  if (value === (props.settings.fallback_model ?? "")) return;
+  savingFallback.value = true;
+  fallbackApplied.value = false;
+  error.value = "";
+  try {
+    const settings = await setRuntimeSettings({ fallback_model: value });
+    if (!settings) throw new Error(t("model.fallbackSaveFailed"));
+    fallbackModel.value = settings.fallback_model ?? "";
+    emit("updated", settings, props.status);
+    fallbackApplied.value = true;
+  } catch (reason) {
+    fallbackModel.value = props.settings?.fallback_model ?? "";
+    error.value = reason instanceof Error ? reason.message : t("model.fallbackSaveFailed");
+  } finally {
+    savingFallback.value = false;
+  }
+}
 
 async function applyReasoning(value: RuntimeSettings["reasoning_effort"]) {
   if (busy.value || !props.settings) return;
@@ -58,8 +81,9 @@ async function applyReasoning(value: RuntimeSettings["reasoning_effort"]) {
   }
 }
 
-watch(() => [props.settings?.model, props.settings?.reasoning_effort] as const, () => {
+watch(() => [props.settings?.model, props.settings?.reasoning_effort, props.settings?.fallback_model] as const, () => {
   reasoningEffort.value = props.settings?.reasoning_effort ?? "";
+  fallbackModel.value = props.settings?.fallback_model ?? "";
 });
 const activeModelName = computed(() =>
   models.value.find((item) => item.is_current)?.name || props.settings?.model || t("model.fallbackName")
@@ -158,6 +182,20 @@ onBeforeUnmount(() => { document.removeEventListener("pointerdown", closeOnOutsi
       </div>
       <div v-if="settings" class="model-picker-reasoning">
         <ReasoningEffortSlider v-model="reasoningEffort" :model-name="activeModelName" compact :status-text="savingReasoning ? t('model.saving') : reasoningApplied ? t('model.reasoningApplied') : ''" :disabled="busy" @update:model-value="reasoningApplied = false" @change="applyReasoning" />
+        <label class="model-picker-fallback">
+          <span class="model-picker-fallback__head"><b>{{ t("model.fallbackLabel") }}</b><em v-if="savingFallback" class="spin"><AppIcon name="LoaderCircle" :size="11" /></em><em v-else-if="fallbackApplied">{{ t("model.reasoningApplied") }}</em></span>
+          <select
+            class="model-picker-fallback__select"
+            :value="fallbackModel"
+            :disabled="busy"
+            :aria-label="t('model.fallbackLabel')"
+            @change="applyFallback(($event.target as HTMLSelectElement).value)"
+          >
+            <option value="">{{ t("model.fallbackNone") }}</option>
+            <option v-for="item in models" :key="item.model" :value="item.model">{{ item.name }}</option>
+          </select>
+          <small>{{ t("model.fallbackHint") }}</small>
+        </label>
       </div>
       <p v-if="error" class="model-picker-error" role="alert">{{ error }}</p>
     </section>
@@ -181,5 +219,13 @@ onBeforeUnmount(() => { document.removeEventListener("pointerdown", closeOnOutsi
 .model-picker-list { min-height: 0; overflow-y: auto; flex: 1 1 auto; }
 .model-picker-popover > header, .model-picker-popover > footer, .model-picker-reasoning { flex-shrink: 0; }
 .model-picker-reasoning { padding: 10px 14px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.model-picker-reasoning .model-picker-fallback { display: grid; gap: 5px; margin-top: 9px; padding-top: 9px; border-top: 1px solid var(--border); }
+.model-picker-reasoning .model-picker-fallback__head { display: flex; align-items: center; gap: 6px; }
+.model-picker-reasoning .model-picker-fallback__head b { color: #343940; font-size: 11px; font-weight: 600; }
+.model-picker-reasoning .model-picker-fallback__head em { color: #16a34a; font-size: 10px; font-style: normal; }
+.model-picker-reasoning .model-picker-fallback__head em.spin { color: #858a91; }
+.model-picker-reasoning .model-picker-fallback__select { width: 100%; height: 30px; padding: 0 8px; color: #343940; background: #f7f7f7; border: 1px solid #dedfe1; border-radius: 7px; outline: 0; font-size: 12px; }
+.model-picker-reasoning .model-picker-fallback__select:focus { background: #fff; border-color: #999ea5; box-shadow: 0 0 0 3px #252a3110; }
+.model-picker-reasoning .model-picker-fallback small { color: #8b9096; font-size: 10px; line-height: 1.45; }
 .model-picker-list button:disabled { cursor: wait; opacity: 0.6; }
 </style>

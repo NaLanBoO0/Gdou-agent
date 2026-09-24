@@ -130,6 +130,16 @@ export const settings = {
       loading: "加载中...",
       hint: "选择要导入的供应商配置：",
     },
+    mcp: {
+      title: "MCP 服务器",
+      desc: "外部工具通过 MCP（stdio）接入，首次连接需你批准",
+      loading: "正在读取 MCP 配置…",
+      empty: "未配置 MCP 服务器。可在 .mcp.json 或 .gdou-agent/mcp.json 中声明。",
+      approvalHint: "只有批准的服务器才会被启动；批准后即可在会话中调用其工具。",
+      approved: "已批准",
+      pending: "待批准",
+      approve: "批准",
+    },
   },
   updater: {
     title: "自动更新",
