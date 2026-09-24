@@ -892,7 +892,6 @@ function startDividerDrag(event: PointerEvent) {
   inspectorResizing.value = true;
   document.body.style.cursor = "col-resize";
   document.body.style.userSelect = "none";
-  target.setPointerCapture?.(event.pointerId);
   const flush = () => {
     rafId = 0;
     inspectorWidth.value = Math.min(maxWidth, Math.max(minWidth, pendingWidth));
@@ -907,7 +906,6 @@ function startDividerDrag(event: PointerEvent) {
     localStorage.setItem("gdou.inspectorWidth", String(Math.round(inspectorWidth.value)));
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-    target.releasePointerCapture?.(event.pointerId);
     document.removeEventListener("pointermove", onMove);
     document.removeEventListener("pointerup", finish);
     document.removeEventListener("pointercancel", finish);
@@ -3306,8 +3304,6 @@ function startSidebarDrag(event: PointerEvent) {
   if (sidebarCollapsed.value || event.button !== 0) return;
   event.preventDefault();
   stopSidebarDragListeners?.();
-  const target = event.currentTarget as HTMLElement;
-  target.setPointerCapture?.(event.pointerId);
   const startX = event.clientX;
   const startWidth = sidebarWidth.value;
   sidebarResizing.value = true;
@@ -3336,7 +3332,6 @@ function startSidebarDrag(event: PointerEvent) {
     sidebarResizing.value = false;
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-    target.releasePointerCapture?.(event.pointerId);
     if (sidebarCollapseArmed.value) sidebarCollapsed.value = true;
     else localStorage.setItem("gdou.sidebarWidth", String(Math.round(sidebarWidth.value)));
     sidebarCollapseArmed.value = false;
@@ -3578,10 +3573,26 @@ function onInjectElement(event: Event) {
   void nextTick(() => currentComposer()?.focus());
 }
 
+function clearStuckDrag() {
+  // 兜底：任何拖拽因指针事件丢失而没走到 finish() 时，强制清理全局 col-resize
+  // 光标和相关状态，避免整个窗口一直显示"调整导航宽度"的拖拽光标。
+  sidebarResizing.value = false;
+  inspectorResizing.value = false;
+  sidebarCollapseArmed.value = false;
+  sidebarPull.value = 0;
+  document.body.style.cursor = "";
+  document.body.style.userSelect = "";
+}
+
 onMounted(() => {
   window.addEventListener("keydown", handleGlobalShortcut);
   window.addEventListener("resize", handleWindowResize);
   handleWindowResize(); // 初始化窗口宽度与窄窗自动收起状态
+  // 侧边栏/面板拖拽的兜底清理：失焦、点外、隐藏或按下 Esc 时强制复位光标。
+  window.addEventListener("blur", clearStuckDrag);
+  window.addEventListener("pointerup", clearStuckDrag);
+  window.addEventListener("keydown", (e) => { if (e.key === "Escape") clearStuckDrag(); });
+  window.addEventListener("visibilitychange", () => { if (document.hidden) clearStuckDrag(); });
   window.addEventListener("gdou:open-in-app-browser", onOpenInAppBrowser);
   window.addEventListener("gdou:open-file", onOpenFileLink);
   window.addEventListener("gdou:inject-element", onInjectElement);
