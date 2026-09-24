@@ -285,8 +285,16 @@ export type UsageOverview = {
 };
 
 export async function getUsageOverview(): Promise<UsageOverview> {
-  const result = await client.request("stats.overview", {});
   const empty = { total: { runs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, elapsedMs: 0 }, byDay: [], byModel: [] };
+  let result: Record<string, unknown>;
+  try {
+    result = await client.request("stats.overview", {});
+  } catch (reason) {
+    if (reason instanceof IpcRequestError && reason.code === -32601) {
+      throw new Error("本地服务版本过旧，不支持用量统计。请完全退出旧的 Gdouwork 服务 后重新打开客户端。");
+    }
+    throw reason;
+  }
   if (!result || typeof result !== "object") return empty;
   const r = result as unknown as Partial<UsageOverview>;
   return {
