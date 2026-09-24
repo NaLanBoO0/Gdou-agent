@@ -477,6 +477,36 @@ function send(socket: WebSocket, message: unknown): void {
 	if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
 }
 
+/**
+ * Cumulative usage per session, summed from the ledger.
+ *
+ * The ledger is append-only and holds one line per finished run, so per-session
+ * totals are a simple sum over `sessionId`. This is what feeds the shell's
+ * task-board token column and hover preview, which read
+ * `total_input_tokens` / `total_output_tokens` / `total_elapsed_s` off the
+ * session snapshot — the fields were previously hardcoded to zero.
+ */
+function usageTotalsBySession(): Map<string, { input: number; output: number; elapsedMs: number }> {
+	const totals = new Map<string, { input: number; output: number; elapsedMs: number }>();
+	try {
+		if (!existsSync(USAGE_LEDGER)) return totals;
+		const lines = readFileSync(USAGE_LEDGER, "utf-8").split("\n").filter((l) => l.trim().length > 0);
+		for (const line of lines) {
+			let entry: Record<string, unknown>;
+			try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+			const id = typeof entry.sessionId === "string" ? entry.sessionId : "";
+			if (!id) continue;
+			const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+			const current = totals.get(id) ?? { input: 0, output: 0, elapsedMs: 0 };
+			current.input += num(entry.input);
+			current.output += num(entry.output);
+			current.elapsedMs += num(entry.elapsedMs);
+			totals.set(id, current);
+		}
+	} catch { /* best-effort: a corrupt ledger falls back to zeros. */ }
+	return totals;
+}
+
 /** A permission decision the kernel is holding open for the shell to answer. */
 const pendingPermissions = new Map<string, (approved: boolean) => void>();
 
@@ -506,11 +536,12 @@ function makeApprover(): (request: { toolName: string; reason: string }) => Prom
 /**
  * One stored session, in the shape the shell's session list expects.
  *
- * Fields we have no equivalent for (`latest_run_id`, token totals) are reported
- * as empty rather than guessed: the shell renders them as "—", and a number
- * invented here would look like a real accounting of a run we never measured.
+ * `latest_run_id` has no equivalent here and stays null. Token totals are real:
+ * they come from the usage ledger via `usageTotalsBySession` (the `totals`
+ * argument), and fall back to 0 — which the shell renders as "—" — only when a
+ * session has no recorded usage yet.
  */
-function snapshotOf(item: SessionSummary): Record<string, unknown> {
+function snapshotOf(item: SessionSummary, totals?: { input: number; output: number; elapsedMs: number }): Record<string, unknown> {
 	return {
 		session_id: item.id,
 		title: item.title,
@@ -527,9 +558,11 @@ function snapshotOf(item: SessionSummary): Record<string, unknown> {
 		workspace_id: item.cwd && item.cwd !== process.cwd() ? item.cwd : null,
 		expert: item.expert ?? null,
 		latest_run_id: null,
-		total_input_tokens: 0,
-		total_output_tokens: 0,
-		total_elapsed_s: 0,
+		// 累计用量来自 usage.ndjson（见 usageTotalsBySession），没有 ledger 记录
+		// 时如实报 0 —— shell 把 0 渲染成 "—"，一个虚构的数字反而像真账。
+		total_input_tokens: totals?.input ?? 0,
+		total_output_tokens: totals?.output ?? 0,
+		total_elapsed_s: Math.round((totals?.elapsedMs ?? 0) / 1000),
 	};
 }
 
@@ -1074,8 +1107,10 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			return reply({});
 		}
 
-		case "session.list":
-			return reply({ sessions: listSessions().map(snapshotOf) });
+		case "session.list": {
+			const totals = usageTotalsBySession();
+			return reply({ sessions: listSessions().map((item) => snapshotOf(item, totals.get(item.id))) });
+		}
 
 		case "stats.overview":
 			return reply(usageOverview());

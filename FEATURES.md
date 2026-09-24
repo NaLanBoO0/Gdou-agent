@@ -1620,6 +1620,8 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
   按本地时区分桶，费用直接沿用 provider 报告的 `usage.cost`，不另建定价表。
 - **用量页**：shell 侧栏新增「用量」入口（Table2 图标），`UsageStats.vue` 展示
   总览卡片（运行次数/输入/输出/缓存读取/耗时/费用）与「按模型」「按日期」两张明细表。
+- **任务板/悬停累计**：`session.list` 从 ledger 按 sessionId 求和，`snapshotOf` 据此
+  报真实的 `total_input_tokens/output/elapsed_s` —— 任务板 token 列与悬停预览不再全是 0。
 
 ---
 
