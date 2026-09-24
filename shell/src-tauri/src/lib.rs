@@ -69,9 +69,11 @@ fn bridge_exe_path() -> Option<PathBuf> {
     }
     if let Ok(exe) = env::current_exe() {
         if let Some(dir) = exe.parent() {
-            let candidate = dir.join("bridge.exe");
-            if candidate.exists() {
-                return Some(candidate);
+            // Tauri installs `bundle.resources` under `<installDir>/resources/`.
+            for candidate in [dir.join("bridge.exe"), dir.join("resources").join("bridge.exe")] {
+                if candidate.exists() {
+                    return Some(candidate);
+                }
             }
         }
     }
@@ -107,7 +109,6 @@ fn daemon_start(state: State<Mutex<BridgeState>>) -> Result<(), String> {
         return Ok(());
     }
 
-    let path = bridge_path();
     let mut lock = state.lock().map_err(|_| "state poisoned".to_string())?;
     if lock.child.is_some() {
         return Ok(());
