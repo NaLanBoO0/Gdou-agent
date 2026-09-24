@@ -56,6 +56,7 @@ export const app = {
   more: "More",
   skills: "Skills",
   experts: "Experts",
+  usage: "Usage",
   expertsSectionAria: "Experts",
   expertsTitle: "Experts",
   expertsSubtitle: "Experts preset behavior and workflow for specific roles and tasks",

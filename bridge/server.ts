@@ -70,7 +70,7 @@ import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
 import type { Skill } from "../src/skills/types.ts";
 import { workspacesPath } from "../src/paths.ts";
-import { PROJECT_ROOT } from "../src/paths.ts";
+import { PROJECT_ROOT, AGENT_HOME } from "../src/paths.ts";
 import { provisionManagedBinaries } from "../src/kernel/toolchain.ts";
 
 const PORT = 7438;
@@ -370,6 +370,109 @@ function translate(event: { type: string; [key: string]: unknown }, runId: strin
 	}
 }
 
+/** Pull token/cache/cost usage out of a pi event that carries it (assistant
+ *  message updates carry the authoritative usage). Best-effort: any field shape
+ *  is tolerated; missing fields just stay at their current (usually 0) value. */
+function accumulateUsage(
+	event: { type: string; [key: string]: unknown },
+	usage: { input: number; output: number; cacheRead: number; cacheWrite: number; cost: number },
+): void {
+	const message = event.message as { usage?: unknown } | undefined;
+	const u = (event.usage ?? message?.usage) as Record<string, unknown> | undefined;
+	if (!u || typeof u !== "object") return;
+	const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+	usage.input += num(u.input ?? u.input_tokens);
+	usage.output += num(u.output ?? u.output_tokens);
+	usage.cacheRead += num(u.cacheRead ?? u.cache_read_input_tokens);
+	usage.cacheWrite += num(u.cacheWrite ?? u.cache_creation_input_tokens);
+	usage.cost += num(u.cost);
+}
+
+/** Ledger of token usage, appended one JSON object per finished run. */
+const USAGE_LEDGER = join(AGENT_HOME, "usage.ndjson");
+
+/**
+ * Persist one run's token usage to the ledger.
+ *
+ * The shell shows a single honest number, not live accounting, so an append-only
+ * log is enough: `stats.overview` reads it back and aggregates by day and model.
+ * The ledger lives in AGENT_HOME like every other piece of user state, so it
+ * survives bridge restarts and does not hide under the repo working tree.
+ */
+function recordUsageRun(entry: {
+	ts: string;
+	sessionId: string;
+	model: string;
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	cost: number;
+	elapsedMs: number;
+}): void {
+	try {
+		mkdirSync(dirname(USAGE_LEDGER), { recursive: true });
+		// Append-only: writing stale contents back would be a race on concurrent
+		// runs, so read the file each time and add this run's line to the end.
+		let ledger = "";
+		if (existsSync(USAGE_LEDGER)) ledger = readFileSync(USAGE_LEDGER, "utf-8");
+		if (ledger.length > 0 && !ledger.endsWith("\n")) ledger += "\n";
+		writeFileSync(USAGE_LEDGER, `${ledger}${JSON.stringify(entry)}\n`, "utf-8");
+	} catch {
+		// Usage is a nice-to-have; a full ledger must never break a run.
+	}
+}
+
+/**
+ * Aggregate the usage ledger into an overview for the shell.
+ *
+ * Returns lifetime totals plus splits by calendar day and by model. Dates are
+ * bucketed in the bridge's local timezone because that is where the user lives;
+ * the ledger stores ISO timestamps so this stays reproducible.
+ */
+function usageOverview(): {
+	total: { runs: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; elapsedMs: number };
+	byDay: Array<{ date: string; runs: number; input: number; output: number; cost: number }>;
+	byModel: Array<{ model: string; runs: number; input: number; output: number; cost: number }>;
+} {
+	const total = { runs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, elapsedMs: 0 };
+	const byDay = new Map<string, { runs: number; input: number; output: number; cost: number }>();
+	const byModel = new Map<string, { runs: number; input: number; output: number; cost: number }>();
+	try {
+		if (!existsSync(USAGE_LEDGER)) return { total, byDay: [], byModel: [] };
+		const lines = readFileSync(USAGE_LEDGER, "utf-8").split("\n").filter((l) => l.trim().length > 0);
+		for (const line of lines) {
+			let entry: Record<string, unknown>;
+			try { entry = JSON.parse(line) as Record<string, unknown>; } catch { continue; }
+			const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
+			const input = num(entry.input);
+			const output = num(entry.output);
+			const cost = num(entry.cost);
+			const elapsedMs = num(entry.elapsedMs);
+			total.runs += 1;
+			total.input += input;
+			total.output += output;
+			total.cacheRead += num(entry.cacheRead);
+			total.cacheWrite += num(entry.cacheWrite);
+			total.cost += cost;
+			total.elapsedMs += elapsedMs;
+			const day = new Date(typeof entry.ts === "string" ? entry.ts : Date.now()).toLocaleDateString("sv-SE");
+			const d = byDay.get(day) ?? { runs: 0, input: 0, output: 0, cost: 0 };
+			d.runs += 1; d.input += input; d.output += output; d.cost += cost;
+			byDay.set(day, d);
+			const model = typeof entry.model === "string" ? entry.model : "";
+			const m = byModel.get(model) ?? { runs: 0, input: 0, output: 0, cost: 0 };
+			m.runs += 1; m.input += input; m.output += output; m.cost += cost;
+			byModel.set(model, m);
+		}
+	} catch { /* aggregate what we can; corruption falls back to empty. */ }
+	return {
+		total,
+		byDay: [...byDay.entries()].map(([date, v]) => ({ date, ...v })).sort((a, b) => a.date.localeCompare(b.date)).reverse(),
+		byModel: [...byModel.entries()].map(([model, v]) => ({ model, ...v })).sort((a, b) => b.input - a.input),
+	};
+}
+
 function send(socket: WebSocket, message: unknown): void {
 	if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(message));
 }
@@ -626,11 +729,23 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 	live.runId = runId;
 
 	const content = params.content as string;
+	const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+	const runStartedAt = Date.now();
 	const unsubscribe = live.session.subscribe((event) => {
 		// Delivered files are recorded as they happen, so the artifact panel
 		// shows what this run actually handed over.
 		if (event.type === "tool_end") captureDelivered(event as { name?: unknown; result?: unknown });
+		// pi streams real token usage on assistant message updates. Accumulate it
+		// so `run.finished` can report honest numbers instead of zeros.
+		accumulateUsage(event, usage);
 		for (const translated of translate(event, runId)) {
+			if (translated.type === "run.finished" && (usage.input || usage.output || usage.cacheRead)) {
+				translated.total_input_tokens = usage.input;
+				translated.total_output_tokens = usage.output;
+				translated.cache_read_input_tokens = usage.cacheRead;
+				translated.cache_creation_input_tokens = usage.cacheWrite;
+				translated.elapsed_s = Math.round((Date.now() - runStartedAt) / 1000);
+			}
 			send(socket, { kind: "event", event: translated });
 		}
 	});
@@ -660,6 +775,22 @@ async function handleSendMessage(socket: WebSocket, id: string, params: Record<s
 		// The turn is done either way; keep the transcript on disk so the
 		// conversation survives the next bridge restart.
 		persistLive(sessionId, live);
+		// Nail down the model that actually produced this run — the live session
+		// may have been rehydrated after a restart, so read settings for the model
+		// rather than trusting the (possibly empty) in-memory snapshot.
+		let model = "";
+		try { model = (loadSettings().model ?? "") as string; } catch { /* best-effort */ }
+		recordUsageRun({
+			ts: new Date().toISOString(),
+			sessionId,
+			model,
+			input: usage.input,
+			output: usage.output,
+			cacheRead: usage.cacheRead,
+			cacheWrite: usage.cacheWrite,
+			cost: usage.cost,
+			elapsedMs: Date.now() - runStartedAt,
+		});
 	}
 	void steered;
 	return reply({ run_id: runId });
@@ -945,6 +1076,9 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 
 		case "session.list":
 			return reply({ sessions: listSessions().map(snapshotOf) });
+
+		case "stats.overview":
+			return reply(usageOverview());
 
 		case "settings.get": {
 			const settings = loadSettings();

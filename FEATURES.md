@@ -96,6 +96,7 @@
 | 50 | **shell 工作台（方案B）** | `shell/`（Vite + Vue3） | 自绘桌面工作台：会话、时间线、检查器、技能中心、自动化页、源码控制；专家选择、备用模型、MCP 徽标（见 2.45） |
 | 51 | **自动化（定时任务）** | `src/automation/schedule.ts`、`bridge/server.ts` | 配方 + 提示词 + 触发时机；运行时触发（桥进程存活期间）；产出单独概念不混入历史；无人值守默认 read-only（见 2.46） |
 | 52 | **提问机制（ask_user）** | `src/tools/ask-user.ts`、`kernel/agent.ts`、`bridge/server.ts` | 模型调用 `ask_user` 向用户提出结构化问题；run 挂起等回答；shell 弹多选/多选弹窗（见 2.47） |
+| 53 | **用量统计** | `bridge/server.ts`、`shell/`（用量页） | 每次 run 结束后把真实 token 用量追加写入 `~/.gdou-agent/usage.ndjson`（input/output/cache/cost/耗时）；`stats.overview` 聚合总览 + 按天 + 按模型；shell 用量页展示卡片与明细表（见 2.48） |
 
 ---
 
@@ -1560,8 +1561,8 @@ spawn 一个第三方进程。审批状态存在 `~/.gdou-agent/mcp-approvals.js
 
 `shell/`（Vite + Vue3）是当前唯一的 GUI。它把内核能力呈现成一张自绘桌面工作台：
 会话列表、对话时间线、右侧检查器（文件/工作区/上下文）、技能中心、自动化页、源码控制页、
-设置对话框。事件流驱动消息渲染，`ExecutionTimeline` 负责时间线，`SessionStatsLine` 显示
-上下文占用条（80% 警示 / 95% 告急 + 进度条）。
+用量页、设置对话框。事件流驱动消息渲染，`ExecutionTimeline` 负责时间线，`SessionStatsLine`
+显示上下文占用条（80% 警示 / 95% 告急 + 进度条）。
 
 **阶段3 补的独有能力 UI**（2026-09-24，对照 FEATURES 各章节逐项核对）：
 
@@ -1601,6 +1602,24 @@ shell 弹多选/多选弹窗；用户回答后 `question.respond` 带回答案�
 promise，答案作为工具结果文本回到模型，run 继续。`question.pending` 供刷新/重连后
 恢复弹窗。真实模型闭环实测通过（2026-09-24）：模型问"选 A 还是 B" → shell 弹窗 →
 回答「方案 A」 → 模型收到并继续。
+
+### 2.48 用量统计
+
+对话界面展示的 token 用量此前全是写死的 0 —— 真实用量只在 pi 的 `message_update`
+事件 `usage` 字段里流过去，桥不读也不存。本轮把这条链路接通：
+
+- **真实数字进会话统计**：run 订阅里累计 `usage`（input/output/cacheRead/cacheWrite/
+  cost），`run.finished` 事件据此填真实的 `total_input_tokens` 等字段，会话统计行
+  显示的是真实 token 数而不是 0。
+- **用量落盘**：每次 run 结束（finally，紧挨 `persistLive`）把
+  `{ts, sessionId, model, input, output, cacheRead, cacheWrite, cost, elapsedMs}`
+  追加一行 JSON 到 `~/.gdou-agent/usage.ndjson`。model 从 settings 取，拿不到则为空。
+  append 而非重写，天然抗并发；写失败静默，绝不影响 run 本身。
+- **聚合接口**：桥端新增 `stats.overview`，读 ledger 聚合成总览
+  （总 input/output/cache/cost/运行数/耗时）+ 按日（YYYY-MM-DD）+ 按模型三张表，
+  按本地时区分桶，费用直接沿用 provider 报告的 `usage.cost`，不另建定价表。
+- **用量页**：shell 侧栏新增「用量」入口（Table2 图标），`UsageStats.vue` 展示
+  总览卡片（运行次数/输入/输出/缓存读取/耗时/费用）与「按模型」「按日期」两张明细表。
 
 ---
 
@@ -1786,6 +1805,8 @@ Cannot find module '.../node_modules/builder-util/node_modules/http-proxy-agent/
   运行时 60s 调度器；无人值守 read-only；实测 CRUD/pause/run/delete 通过
 - **提问机制**（2026-09-24）：内核 `ask_user` 工具 + 桥端 question 通道；真实模型闭环
   实测通过（模型提问 → shell 弹窗 → 回答 → 模型继续）
+- **用量统计**（2026-09-24）：`usage.ndjson` 落盘 + `stats.overview` 聚合 + shell 用量页
+  （总览卡片 + 按模型/按日期明细）；会话统计行的 token 是真实数字不再是 0
 
 **未验证**：
 

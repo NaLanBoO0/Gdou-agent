@@ -18,6 +18,7 @@ import SlashCommandMenu from "./components/CommandPalette/SlashCommandMenu.vue";
 import SkillCenter from "./components/Skills/SkillCenter.vue";
 import ExpertsCenter from "./components/Experts/ExpertsCenter.vue";
 import AutomationPage from "./components/Automation/AutomationPage.vue";
+import UsageStats from "./components/Usage/UsageStats.vue";
 import PluginIcon from "./components/Skills/PluginIcon.vue";
 import PromptEditor from "./components/Composer/PromptEditor.vue";
 import SettingsDialog from "./components/Settings/SettingsDialog.vue";
@@ -48,7 +49,7 @@ import {
 
 const { t } = useI18n({ useScope: "global" });
 
-type Page = "work" | "skills" | "plugins" | "experts" | "automations" | "source-control";
+type Page = "work" | "skills" | "plugins" | "experts" | "automations" | "source-control" | "usage";
 type AppMenu = "file" | "edit" | "view" | "help";
 type RuntimeEvent = Record<string, unknown>;
 type ProjectDialogTone = "neutral" | "success" | "danger";
@@ -3791,6 +3792,7 @@ watch(activeWorkspace, (project) => {
         <button :class="{ active: page === 'skills' }" @click="openPage('skills')"><AppIcon name="Puzzle" :size="18" /><span>{{ t('app.skills') }}</span></button>
         <button :class="{ active: page === 'plugins' }" @click="openPage('plugins')"><AppIcon name="Plug" :size="18" /><span>{{ t('app.plugins') }}</span></button>
         <button :class="{ active: page === 'experts' }" @click="openPage('experts')"><AppIcon name="Brain" :size="18" /><span>{{ t('app.experts') }}</span></button>
+        <button :class="{ active: page === 'usage' }" @click="openPage('usage')"><AppIcon name="Table2" :size="18" /><span>{{ t('app.usage') }}</span></button>
       </nav>
 
       <div class="sidebar-workspace">
@@ -4129,6 +4131,8 @@ watch(activeWorkspace, (project) => {
       <section v-if="page === 'plugins'" class="chat-main"><SkillCenter :connected="connected" :workspace-id="activeWorkspace?.workspace_id ?? null" :workspace-name="activeWorkspace?.name ?? null" default-area="plugins" @use-in-chat="useSkillInChat" /></section>
 
       <section v-if="page === 'experts'" class="chat-main"><ExpertsCenter :experts="experts" @use-expert="useExpertInChat" /></section>
+
+      <section v-if="page === 'usage'" class="chat-main"><UsageStats :connected="connected" /></section>
 
     </main>
 

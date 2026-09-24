@@ -56,6 +56,7 @@ export const app = {
   more: "更多",
   skills: "技能",
   experts: "专家",
+  usage: "用量",
   expertsSectionAria: "专家",
   expertsTitle: "专家",
   expertsSubtitle: "针对特定角色与任务预设行为方式的专家",

@@ -278,6 +278,24 @@ export async function listExperts(): Promise<ExpertSummary[]> {
   return (result.experts as ExpertSummary[] | undefined) ?? [];
 }
 
+export type UsageOverview = {
+  total: { runs: number; input: number; output: number; cacheRead: number; cacheWrite: number; cost: number; elapsedMs: number };
+  byDay: Array<{ date: string; runs: number; input: number; output: number; cost: number }>;
+  byModel: Array<{ model: string; runs: number; input: number; output: number; cost: number }>;
+};
+
+export async function getUsageOverview(): Promise<UsageOverview> {
+  const result = await client.request("stats.overview", {});
+  const empty = { total: { runs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, elapsedMs: 0 }, byDay: [], byModel: [] };
+  if (!result || typeof result !== "object") return empty;
+  const r = result as unknown as Partial<UsageOverview>;
+  return {
+    total: { ...empty.total, ...((r.total ?? empty.total) as UsageOverview["total"]) },
+    byDay: Array.isArray(r.byDay) ? (r.byDay as UsageOverview["byDay"]) : [],
+    byModel: Array.isArray(r.byModel) ? (r.byModel as UsageOverview["byModel"]) : [],
+  };
+}
+
 export async function listMcpServers(): Promise<McpServerSummary[]> {
   const result = await client.request("mcp.list", {});
   return (result.servers as McpServerSummary[] | undefined) ?? [];
