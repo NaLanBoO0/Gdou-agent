@@ -449,6 +449,7 @@ onMounted(() => {
               <datalist id="model-suggestions">
                 <option v-if="selectedVendor.id === 'deepseek'" value="deepseek-chat">DeepSeek V3</option>
                 <option v-if="selectedVendor.id === 'deepseek'" value="deepseek-reasoner">DeepSeek R1</option>
+                <option v-if="selectedVendor.id === 'deepseek'" value="deepseek/deepseek-flash">DeepSeek Flash（部分服务商）</option>
                 <option v-if="selectedVendor.id === 'anthropic'" value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
                 <option v-if="selectedVendor.id === 'anthropic'" value="claude-opus-4-20250514">Claude Opus 4</option>
                 <option v-if="selectedVendor.id === 'anthropic'" value="claude-3-5-sonnet-latest">Claude 3.5 Sonnet</option>

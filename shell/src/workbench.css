@@ -912,7 +912,7 @@
 .sidebar-collapsed .sidebar-viewport { width: 0; visibility: hidden; pointer-events: none; transition-delay: 220ms; }
 .sidebar-collapsed .agent-sidebar { opacity: 0; transform: translateX(-12px); }
 .gdou-shell.is-macos.sidebar-collapsed .agent-sidebar { transform: none; }
-.sidebar-resizer { position: absolute; z-index: 25; top: 40px; bottom: 10px; left: var(--sidebar-width, 268px); width: 6px; padding: 0; color: #77808a; cursor: col-resize; outline: 0; opacity: 0; transform: translateX(calc(var(--sidebar-pull, 0px) - 3px)); touch-action: none; transition: left 200ms ease, opacity 120ms ease, transform 160ms cubic-bezier(.2, .8, .2, 1); }
+.sidebar-resizer { position: absolute; z-index: 25; top: 40px; bottom: 10px; left: var(--sidebar-width, 268px); width: 6px; padding: 0; color: #77808a; cursor: default; outline: 0; opacity: 0; transform: translateX(calc(var(--sidebar-pull, 0px) - 3px)); touch-action: none; transition: left 200ms ease, opacity 120ms ease, transform 160ms cubic-bezier(.2, .8, .2, 1); }
 .sidebar-resizer:hover, .sidebar-resizer:active, .sidebar-resizer:focus-visible { opacity: 1; }
 .sidebar-resizing .sidebar-resizer { transition: none; }
 .sidebar-collapsed .sidebar-resizer { visibility: hidden; opacity: 0; pointer-events: none; transform: translateX(-50%); }
