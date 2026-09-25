@@ -34,7 +34,7 @@ function fmtCost(n: number): string {
 
 function fmtDuration(ms: number): string {
   const seconds = Math.round((Number.isFinite(ms) ? ms : 0) / 1000);
-  if (seconds < 60) return t("usage.seconds", { n: seconds });
+  if (seconds < 60) return t("chat.usage.seconds", { n: seconds });
   const minutes = Math.floor(seconds / 60);
   const rem = seconds % 60;
   return `${minutes}m ${rem}s`;
@@ -50,20 +50,20 @@ const total = computed(() => overview.value?.total ?? emptyOverview.total);
 const hasData = computed(() => total.value.runs > 0);
 
 const cards = computed(() => [
-  { icon: "Clock3", label: t("usage.cardRuns"), value: fmtInt(total.value.runs) },
-  { icon: "ArrowUp", label: t("usage.cardInput"), value: fmtTokens(total.value.input) },
-  { icon: "ArrowUpRight", label: t("usage.cardOutput"), value: fmtTokens(total.value.output) },
-  { icon: "CircleDotDashed", label: t("usage.cardCacheRead"), value: fmtTokens(total.value.cacheRead) },
-  { icon: "Timer", label: t("usage.cardElapsed"), value: fmtDuration(total.value.elapsedMs) },
-  { icon: "Coins", label: t("usage.cardCost"), value: fmtCost(total.value.cost) },
+  { icon: "Clock3", label: t("chat.usage.cardRuns"), value: fmtInt(total.value.runs) },
+  { icon: "ArrowUp", label: t("chat.usage.cardInput"), value: fmtTokens(total.value.input) },
+  { icon: "ArrowUpRight", label: t("chat.usage.cardOutput"), value: fmtTokens(total.value.output) },
+  { icon: "CircleDotDashed", label: t("chat.usage.cardCacheRead"), value: total.value.cacheRead > 0 ? fmtTokens(total.value.cacheRead) : "—" },
+  { icon: "Timer", label: t("chat.usage.cardElapsed"), value: total.value.elapsedMs > 0 ? fmtDuration(total.value.elapsedMs) : "—" },
+  { icon: "Coins", label: t("chat.usage.cardCost"), value: fmtCost(total.value.cost) },
 ]);
 
 function fmtModel(model: string): string {
-  return model || t("usage.unknownModel");
+  return model || t("chat.usage.unknownModel");
 }
 
 async function load() {
-  if (!props.connected) { overview.value = undefined; error.value = t("usage.notConnected"); return; }
+  if (!props.connected) { overview.value = undefined; error.value = t("chat.usage.notConnected"); return; }
   loading.value = true; error.value = "";
   try { overview.value = await getUsageOverview(); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -77,7 +77,7 @@ watch(() => props.connected, load);
 <template>
   <section class="chat-usage" aria-labelledby="usage-title">
     <header class="usage-header">
-      <div><span class="usage-kicker">TOKEN USAGE</span><h1 id="usage-title">{{ t("usage.title") }}</h1><p>{{ t("usage.desc") }}</p></div>
+      <div><span class="usage-kicker">TOKEN USAGE</span><h1 id="usage-title">{{ t("chat.usage.title") }}</h1><p>{{ t("chat.usage.desc") }}</p></div>
       <button type="button" class="usage-icon-button" :aria-label="t('app.refresh')" :disabled="loading" @click="load"><AppIcon name="RefreshCw" :size="16" :class="{ spin: loading }" /></button>
     </header>
 
@@ -93,9 +93,9 @@ watch(() => props.connected, load);
 
       <div class="usage-grid">
         <section v-if="overview?.byModel.length" class="usage-table-card">
-          <header><h2><AppIcon name="Cpu" :size="16" />{{ t("usage.byModel") }}</h2></header>
+          <header><h2><AppIcon name="Cpu" :size="16" />{{ t("chat.usage.byModel") }}</h2></header>
           <table>
-            <thead><tr><th>{{ t("usage.thModel") }}</th><th>{{ t("usage.thRuns") }}</th><th>{{ t("usage.thInput") }}</th><th>{{ t("usage.thOutput") }}</th><th>{{ t("usage.thCost") }}</th></tr></thead>
+            <thead><tr><th>{{ t("chat.usage.thModel") }}</th><th>{{ t("chat.usage.thRuns") }}</th><th>{{ t("chat.usage.thInput") }}</th><th>{{ t("chat.usage.thOutput") }}</th><th>{{ t("chat.usage.thCost") }}</th></tr></thead>
             <tbody>
               <tr v-for="row in overview.byModel" :key="row.model">
                 <td>{{ fmtModel(row.model) }}</td><td>{{ fmtInt(row.runs) }}</td><td>{{ fmtTokens(row.input) }}</td><td>{{ fmtTokens(row.output) }}</td><td>{{ fmtCost(row.cost) }}</td>
@@ -105,9 +105,9 @@ watch(() => props.connected, load);
         </section>
 
         <section v-if="overview?.byDay.length" class="usage-table-card">
-          <header><h2><AppIcon name="Table2" :size="16" />{{ t("usage.byDay") }}</h2></header>
+          <header><h2><AppIcon name="Table2" :size="16" />{{ t("chat.usage.byDay") }}</h2></header>
           <table>
-            <thead><tr><th>{{ t("usage.thDate") }}</th><th>{{ t("usage.thRuns") }}</th><th>{{ t("usage.thInput") }}</th><th>{{ t("usage.thOutput") }}</th><th>{{ t("usage.thCost") }}</th></tr></thead>
+            <thead><tr><th>{{ t("chat.usage.thDate") }}</th><th>{{ t("chat.usage.thRuns") }}</th><th>{{ t("chat.usage.thInput") }}</th><th>{{ t("chat.usage.thOutput") }}</th><th>{{ t("chat.usage.thCost") }}</th></tr></thead>
             <tbody>
               <tr v-for="row in overview.byDay" :key="row.date">
                 <td>{{ fmtDate(row.date) }}</td><td>{{ fmtInt(row.runs) }}</td><td>{{ fmtTokens(row.input) }}</td><td>{{ fmtTokens(row.output) }}</td><td>{{ fmtCost(row.cost) }}</td>
@@ -120,7 +120,7 @@ watch(() => props.connected, load);
 
     <div v-else-if="!error" class="usage-empty">
       <span><AppIcon name="Table2" :size="28" /></span>
-      <h2>{{ t("usage.noData") }}</h2><p>{{ t("usage.noDataHint") }}</p>
+      <h2>{{ t("chat.usage.noData") }}</h2><p>{{ t("chat.usage.noDataHint") }}</p>
     </div>
   </section>
 </template>

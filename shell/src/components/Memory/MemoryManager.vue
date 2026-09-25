@@ -22,7 +22,7 @@ const filter = ref<"all" | MemoryCategory>("all");
 const categories: MemoryCategory[] = ["profile", "preference", "project", "fact"];
 
 function categoryLabel(category: MemoryCategory): string {
-  return t(`memory.category.${category}`);
+  return t(`chat.memory.category.${category}`);
 }
 
 function fmtDate(value: string): string {
@@ -35,7 +35,7 @@ const visible = computed(() => filter.value === "all" ? entries.value : entries.
 const total = computed(() => entries.value.length);
 
 async function load() {
-  if (!props.connected) { entries.value = []; error.value = t("memory.notConnected"); return; }
+  if (!props.connected) { entries.value = []; error.value = t("chat.memory.notConnected"); return; }
   loading.value = true; error.value = "";
   try { entries.value = await getMemoryEntries(); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -51,7 +51,7 @@ async function saveEdit() {
   loading.value = true; error.value = "";
   try {
     await updateMemoryEntry(editing.value.key.trim(), editing.value.value.trim(), editing.value.category);
-    notice.value = t("memory.updated");
+    notice.value = t("chat.memory.updated");
     editing.value = null;
     await load();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -63,7 +63,7 @@ async function addEntry() {
   loading.value = true; error.value = "";
   try {
     await updateMemoryEntry(newKey.value.trim(), newValue.value.trim(), newCategory.value);
-    notice.value = t("memory.added");
+    notice.value = t("chat.memory.added");
     newKey.value = ""; newValue.value = ""; newCategory.value = "fact";
     await load();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
@@ -71,9 +71,9 @@ async function addEntry() {
 }
 
 async function remove(entry: MemoryEntry) {
-  if (!window.confirm(t("memory.deleteConfirm", { key: entry.key }))) return;
+  if (!window.confirm(t("chat.memory.deleteConfirm", { key: entry.key }))) return;
   error.value = "";
-  try { await deleteMemoryEntry(entry.key); notice.value = t("memory.deleted"); await load(); }
+  try { await deleteMemoryEntry(entry.key); notice.value = t("chat.memory.deleted"); await load(); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : String(cause); }
 }
 
@@ -84,14 +84,14 @@ watch(() => props.connected, load);
 <template>
   <section class="chat-memory" aria-labelledby="memory-title">
     <header class="memory-header">
-      <div><span class="memory-kicker">USER MEMORY</span><h1 id="memory-title">{{ t("memory.title") }}</h1><p>{{ t("memory.desc") }}</p></div>
+      <div><span class="memory-kicker">USER MEMORY</span><h1 id="memory-title">{{ t("chat.memory.title") }}</h1><p>{{ t("chat.memory.desc") }}</p></div>
       <button type="button" class="memory-icon-button" :aria-label="t('app.refresh')" :disabled="loading" @click="load"><AppIcon name="RefreshCw" :size="16" :class="{ spin: loading }" /></button>
     </header>
 
     <p v-if="notice" class="memory-notice" role="status"><AppIcon name="CheckCircle2" :size="15" />{{ notice }}</p>
     <p v-if="error" class="memory-error" role="alert"><AppIcon name="AlertCircle" :size="15" />{{ error }}</p>
 
-    <div class="memory-toolbar"><span>{{ t("memory.count", { n: total }) }}</span><nav><button v-for="item in (['all','profile','preference','project','fact'] as const)" :key="item" :class="{ active: filter === item }" @click="filter = item">{{ item === 'all' ? t('memory.filterAll') : categoryLabel(item) }}</button></nav></div>
+    <div class="memory-toolbar"><span>{{ t("chat.memory.count", { n: total }) }}</span><nav><button v-for="item in (['all','profile','preference','project','fact'] as const)" :key="item" :class="{ active: filter === item }" @click="filter = item">{{ item === 'all' ? t('chat.memory.filterAll') : categoryLabel(item) }}</button></nav></div>
 
     <div v-if="visible.length" class="memory-list">
       <article v-for="entry in visible" :key="entry.key" class="memory-card">
@@ -100,12 +100,12 @@ watch(() => props.connected, load);
           <span class="memory-meta">{{ t(entry.source === "manual" ? "memory.sourceManual" : "memory.sourceSummary") }} · {{ fmtDate(entry.updatedAt) }}</span>
         </div>
         <template v-if="editing && editing.key === entry.key">
-          <label>{{ t("memory.keyLabel") }}<input v-model="editing.key" disabled /></label>
-          <label>{{ t("memory.valueLabel") }}<textarea v-model="editing.value" rows="3" /></label>
-          <label>{{ t("memory.categoryLabel") }}<select v-model="editing.category"><option v-for="c in categories" :key="c" :value="c">{{ categoryLabel(c) }}</option></select></label>
+          <label>{{ t("chat.memory.keyLabel") }}<input v-model="editing.key" disabled /></label>
+          <label>{{ t("chat.memory.valueLabel") }}<textarea v-model="editing.value" rows="3" /></label>
+          <label>{{ t("chat.memory.categoryLabel") }}<select v-model="editing.category"><option v-for="c in categories" :key="c" :value="c">{{ categoryLabel(c) }}</option></select></label>
           <footer class="memory-card-actions">
             <button @click="editing = null">{{ t("chat.cancel") }}</button>
-            <button class="memory-primary" :disabled="loading" @click="saveEdit"><AppIcon name="Check" :size="14" />{{ t("memory.save") }}</button>
+            <button class="memory-primary" :disabled="loading" @click="saveEdit"><AppIcon name="Check" :size="14" />{{ t("chat.memory.save") }}</button>
           </footer>
         </template>
         <template v-else>
@@ -121,18 +121,18 @@ watch(() => props.connected, load);
 
     <div v-else-if="!error && !loading" class="memory-empty">
       <span><AppIcon name="Brain" :size="28" /></span>
-      <h2>{{ t("memory.empty") }}</h2>
-      <p>{{ t("memory.emptyHint") }}</p>
+      <h2>{{ t("chat.memory.empty") }}</h2>
+      <p>{{ t("chat.memory.emptyHint") }}</p>
     </div>
 
     <form v-if="props.connected" class="memory-form" @submit.prevent="addEntry">
-      <h3><AppIcon name="Plus" :size="15" />{{ t("memory.manualAdd") }}</h3>
+      <h3><AppIcon name="Plus" :size="15" />{{ t("chat.memory.manualAdd") }}</h3>
       <div class="memory-form-grid">
-        <label>{{ t("memory.keyLabel") }}<input v-model="newKey" :placeholder="t('memory.keyPlaceholder')" /></label>
-        <label>{{ t("memory.categoryLabel") }}<select v-model="newCategory"><option v-for="c in categories" :key="c" :value="c">{{ categoryLabel(c) }}</option></select></label>
+        <label>{{ t("chat.memory.keyLabel") }}<input v-model="newKey" :placeholder="t('chat.memory.keyPlaceholder')" /></label>
+        <label>{{ t("chat.memory.categoryLabel") }}<select v-model="newCategory"><option v-for="c in categories" :key="c" :value="c">{{ categoryLabel(c) }}</option></select></label>
       </div>
-      <label>{{ t("memory.valueLabel") }}<textarea v-model="newValue" rows="3" :placeholder="t('memory.valuePlaceholder')" /></label>
-      <button type="submit" class="memory-primary" :disabled="loading || !newKey.trim() || !newValue.trim()"><AppIcon name="Check" :size="14" />{{ t("memory.add") }}</button>
+      <label>{{ t("chat.memory.valueLabel") }}<textarea v-model="newValue" rows="3" :placeholder="t('chat.memory.valuePlaceholder')" /></label>
+      <button type="submit" class="memory-primary" :disabled="loading || !newKey.trim() || !newValue.trim()"><AppIcon name="Check" :size="14" />{{ t("chat.memory.add") }}</button>
     </form>
   </section>
 </template>
