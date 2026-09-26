@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AppIcon from "../icons/AppIcon.vue";
 import { useI18n } from "vue-i18n";
-import { archiveSession, listWorkspaces, moveSession, pinSession, renameSession, resumeSession, type Session, type Workspace } from "../../services/gdou-runtime";
+import { archiveSession, listWorkspaces, moveSession, pinSession, renameSession, resumeSession, sessionHistory, type Session, type Workspace } from "../../services/gdou-runtime";
 import { friendlyError } from "../../utils/errorNotice";
 
 const { t } = useI18n({ useScope: "global" });
@@ -192,6 +192,64 @@ async function copyText(value: string, message = t("session.copied")) {
   }
 }
 
+/** pi 消息 content 是 block 数组（text / thinking …），提取为可读文本。 */
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part !== "object" || part === null) return "";
+        const block = part as Record<string, unknown>;
+        if (block.type === "text" && typeof block.text === "string") return block.text;
+        if (block.type === "thinking" && typeof block.thinking === "string") return `> ${block.thinking}`;
+        return "";
+      })
+      .filter(Boolean)
+      .join("\n\n");
+  }
+  return "";
+}
+
+async function exportConversation() {
+  if (busy.value) return;
+  busy.value = true;
+  notice.value = "";
+  try {
+    const history = await sessionHistory(props.session.session_id);
+    const messages = (history.messages ?? []) as Array<Record<string, unknown>>;
+    const lines: string[] = [
+      `# ${props.session.title || t("session.untitled")}`,
+      "",
+      `- 会话 ID: ${props.session.session_id}`,
+      `- 导出时间: ${new Date().toLocaleString()}`,
+      "",
+    ];
+    for (const message of messages) {
+      const role = message.role === "user" ? "用户" : "Assistant";
+      const model = typeof message.model === "string" && message.model ? `（${message.model}）` : "";
+      const body = messageText(message.content);
+      if (!body.trim()) continue;
+      lines.push(`## ${role}${model}`, "", body, "");
+    }
+    const markdown = lines.join("\n");
+    const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${(props.session.title || "conversation").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80)}.md`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    notice.value = t("session.copied");
+    closeMenu();
+  } catch (error) {
+    notice.value = t("session.exportFailed", { message: friendlyError(error).message });
+  } finally {
+    busy.value = false;
+  }
+}
+
 async function share() {
   const url = new URL(window.location.href);
   url.hash = `session=${encodeURIComponent(props.session.session_id)}`;
@@ -269,6 +327,8 @@ onBeforeUnmount(() => {
               <button role="menuitem" @click="copyText(session.session_id, t('session.idCopied'))">{{ t('session.copyId') }}</button>
             </div>
           </div>
+          <div class="session-menu__separator" />
+          <button role="menuitem" :disabled="busy" @click="exportConversation"><AppIcon name="Download" :size="19" />{{ t('session.exportConversation') }}</button>
           <div class="session-menu__separator" />
           <button role="menuitem" @click="openInNewWindow"><AppIcon name="ExternalLink" :size="19" />{{ t('session.openInNewWindow') }}</button>
         </template>

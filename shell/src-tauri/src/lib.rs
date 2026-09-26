@@ -160,6 +160,23 @@ fn open_path_with_app(app: tauri::AppHandle, path: String, app_id: String) -> Re
     Ok(())
 }
 
+/// Whether the updater is wired up in this build (a pubkey is configured).
+///
+/// The front-end checks this before calling `check()`, so an installer built
+/// without updater configuration shows "未启用在线更新" instead of an opaque
+/// plugin error.
+#[tauri::command]
+fn updater_configured(app: tauri::AppHandle) -> bool {
+    app.config()
+        .plugins
+        .0
+        .get("updater")
+        .and_then(|updater| updater.get("pubkey"))
+        .and_then(|key| key.as_str())
+        .map(|key| !key.is_empty())
+        .unwrap_or(false)
+}
+
 /// Stop the bridge process we own. Called on app/window exit so no orphan `node`
 /// keeps holding 7438.
 fn stop_bridge(state: &State<Mutex<BridgeState>>) {
@@ -176,8 +193,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Mutex::new(BridgeState::new()))
-        .invoke_handler(tauri::generate_handler![daemon_start, open_path_with_app])
+        .invoke_handler(tauri::generate_handler![daemon_start, open_path_with_app, updater_configured])
         .build(tauri::generate_context!())
         .expect("error while building Gdouwork")
         .run(|app, event| {

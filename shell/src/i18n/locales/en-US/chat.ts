@@ -53,6 +53,13 @@ export const chat = {
     noDataHint: "Real token usage will appear here after you finish a conversation.",
     unknownModel: "Unknown model",
     seconds: "{n}s",
+    budgetTitle: "Monthly budget",
+    budgetHint: "Set a budget by this month's cost (USD); overspending is highlighted.",
+    budgetPlaceholder: "e.g. 5",
+    budgetMonthCost: "This month {cost} / budget {budget}",
+    budgetPercent: "{percent}% used",
+    budgetOver: "Over monthly budget",
+    budgetSet: "Set budget",
   },
   memory: {
     title: "User Memory",

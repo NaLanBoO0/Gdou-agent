@@ -98,6 +98,12 @@
 | 52 | **提问机制（ask_user）** | `src/tools/ask-user.ts`、`kernel/agent.ts`、`bridge/server.ts` | 模型调用 `ask_user` 向用户提出结构化问题；run 挂起等回答；shell 弹多选/多选弹窗（见 2.47） |
 | 53 | **用量统计** | `bridge/server.ts`、`shell/`（用量页） | 每次 run 结束后把真实 token 用量追加写入 `~/.gdou-agent/usage.ndjson`（input/output/cache/cost/耗时）；`stats.overview` 聚合总览 + 按天 + 按模型；shell 用量页展示卡片与明细表（见 2.48） |
 | 54 | **用户记忆系统** | `src/memory/memory.ts`、`kernel/agent.ts`、`bridge/server.ts`、`shell/`（记忆页） | 对话结束后自动提炼关于用户的事实写入 `~/.gdou-agent/memory.json`，新会话启动时注入系统提示，跨对话记住称呼/语言/偏好/项目；记忆页可查看、编辑、删除、手动添加（见 2.49） |
+| 55 | **思考块 UI 修复与优化** | `shell/src/components/timeline/ActivityPhase.vue` | 修复状态类 `thinking` 与全局 `.thinking` 同名冲突导致的展开后正文重叠；思考区独立标签 + 独立容器，与正文视觉分离（见 2.50） |
+| 56 | **Git 提交流程落地** | `bridge/server.ts`、`shell/`（源代码管理） | 桥端实现 `change.stage/unstage/discard/revert` 与 `git.commit`（路径安全过滤 + 确认参数），`change.list` 补齐 index/worktree 状态与 numstat 增减统计，`change.diff` HEAD 优先，`git.history` 支持分页（见 2.51） |
+| 57 | **自动更新** | `shell/src-tauri`（updater 插件）、`scripts/updater-release.mjs` | Tauri updater 接线：插件 + `updater_configured` 命令 + 公钥/endpoints 配置 + minisign 密钥对；发布脚本签名并生成 latest.json（见 2.52） |
+| 58 | **切换会话工作目录** | `bridge/server.ts`（`session.set_workspace`） | 会话可移动到其他项目：重建 agent（同消息同专家、换 cwd）并落盘；运行中拒绝（见 2.53） |
+| 59 | **对话导出** | `shell/`（SessionActions） | 会话菜单「导出对话」：拉取完整历史组装 Markdown（用户/Assistant 分节、thinking 作引用）并下载（见 2.53） |
+| 60 | **前端质量与用量/记忆增强** | `shell/`（多处） | vue-tsc 类型错误清零（删未接入 Workflow 死代码、重建 protocol.ts）；记忆页排序与来源标签 i18n 修复；用量页月度预算告警（见 2.54） |
 
 ---
 
@@ -1664,6 +1670,79 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
 - **同 key 合并去重**（2026-09-26）：同一事实可能同时存在于 memory（自动提炼）与
   notes（手动更正），直接拼接会在 prompt 出现两行矛盾的同名事实。`memoryPromptBlock`
   改为按 key 合并，**notes 覆盖 memory**——手动更正必须压过自动提炼。
+
+### 2.50 思考块 UI 修复与优化
+
+对话中模型的思考内容此前有两个问题：展开后与正文重叠、思考与正文视觉区分度不足。
+
+- **重叠根因**：`ActivityPhase` 根元素的状态 class `thinking` 与 `workbench.css` 全局
+  `.thinking`（composer 思考等级按钮的 `display:inline-flex; height:30px;
+  align-items:center`）同名冲突——展开的 body 作为 flex 项在 30px 高的行上垂直居中，
+  向上溢出约 205px 覆盖上方用户气泡。修复：状态类改名 `has-thinking`，并给
+  `.activity-phase` 显式 `display:block; height:auto`（scoped 特异性覆盖全局裸类，
+  防御同类冲突）。
+- **视觉优化**（参考 WorkBuddy 思考块）：展开的思考区带独立「思考」标签行（脑图标 +
+  `timeline.thinking.label`），思考全文在独立的浅灰容器中展示（不透明背景、1px 边框、
+  圆角 8px、max-height 260px 滚动），与工具调用区分层展示；展开过渡动画上限提高到
+  2000px。
+- **实测**（2026-09-26）：浏览器实测展开后 body 从 trigger 正下方正常向下展开，
+  与用户气泡无重叠（展开顶 292 > 气泡底 210）；思考标签与容器样式清晰。
+
+### 2.51 Git 提交流程落地
+
+此前桥端对 git 写操作一律「诚实拒绝」：源代码管理页能看 diff 却无法暂存/提交。
+本轮把五个写方法实现出来，用户在界面上的每次点击就是审批步骤：
+
+- **change.stage / unstage**：逐路径 `git add` / `git restore --staged`，路径经
+  `safeGitPath` 校验（拒绝绝对路径与 `..` 越界），失败路径单独回报。
+- **change.discard / change.revert**：`git checkout --` 恢复工作区；需 `confirm`
+  参数；已提交改动与未跟踪文件如实 blocked，不做越权操作。
+- **git.commit**：`git commit -m`（execFile 传参，无 shell 注入，消息原样保留），
+  返回哈希；空消息被拒。
+- **change.list 契约补齐**：porcelain 的 X/Y 状态拆成 `index_status` /
+  `worktree_status`（前端按此分组「已暂存/未暂存」，此前永远为空分组）；
+  用 `git diff --numstat HEAD` 补 `additions/deletions`（文件级 +N −M 不再全 0）。
+- **change.diff** 改 HEAD 优先（staged + unstaged 一起看），无 HEAD 时回退。
+- **git.history** 支持 limit/skip 分页与 `has_more`。
+- **实测**（2026-09-26）：隔离临时仓库 RPC 探针 14 项全过（含暂存分组、提交、
+  回滚 blocked、绝对路径过滤）；真实项目 SourceControl 页显示真实增减数与分组。
+
+### 2.52 自动更新（Tauri updater）
+
+应用内一键升级的接线：
+
+- `Cargo.toml` 加 `tauri-plugin-updater`；`lib.rs` 注册插件并新增
+  `updater_configured` 命令（前端据此区分「未启用」与「检查失败」）。
+- `tauri.conf.json` 写 `plugins.updater`：minisign **公钥** + GitHub release
+  endpoints（`releases/latest/download/latest.json`）。
+- 签名密钥对：`tauri signer generate` 生成到 `~/.gdou-agent/updater.key`（私钥
+  绝不入库；丢失即无法再发布更新）。
+- **发布脚本** `scripts/updater-release.mjs <version> <installer>`：签名安装包
+  生成 `.minisig` 与 `latest.json`，三个文件一起传 release 即被应用内更新器发现。
+  注意：`tauri signer sign` 在非交互（无 TTY）终端会静默挂起，脚本 8 秒超时后
+  提示在真实终端手动执行。
+
+### 2.53 会话工作目录切换与对话导出
+
+- **移动到项目**：桥端 `session.set_workspace` 实现（此前拒绝）。`cwd` 在 agent
+  上是 readonly，故用**同消息、同专家**重建 AgentSession 指向新工作目录并落盘，
+  侧栏归属随之刷新；会话运行中拒绝切换。前端「项目」子菜单（SessionActions）
+  早已就绪，直接接通。
+- **导出对话**：会话菜单新增「导出对话」——`session.get_history` 拉完整消息，
+  组装 Markdown（标题/会话 ID/导出时间，用户与 Assistant 分节，thinking 折叠为
+  引用），Blob 下载为 `.md`。i18n zh/en 已补。
+
+### 2.54 前端质量与用量/记忆增强
+
+- **vue-tsc 类型错误清零**：从 60+ 归零。删除未接入的 `components/Workflow/*`
+  （引用不存在的 `packages/protocol`，是死代码）；重建 `src/protocol.ts` 为最小
+  传输类型（EventEnvelope/JsonRpcResponse/RuntimeEvent）；修 App.vue（setTimeout
+  类型、flatMap 注解、changes 合并契约、dialog title）与 ModelConfig/Inspector/
+  PipelineStream/useFocusTrap/ipc.ts 的边界类型。
+- **记忆页**：卡片来源标签缺 `chat.` 前缀会显示原始键名，已修；列表按
+  updatedAt 最新在前排序。
+- **用量页月度预算**：设置美元预算（localStorage），按 byDay 聚合当月费用，
+  进度条显示已用百分比，超支红色高亮 + 告警；zh/en i18n 已补。
 
 ---
 

@@ -49,6 +49,33 @@ function fmtDate(date: string): string {
 const total = computed(() => overview.value?.total ?? emptyOverview.total);
 const hasData = computed(() => total.value.runs > 0);
 
+// ---- 月度预算（本地偏好，仅前端展示）----
+const BUDGET_KEY = "gdou.usageBudget";
+const budget = ref(Number(localStorage.getItem(BUDGET_KEY) ?? 0) || 0);
+const budgetInput = ref(budget.value > 0 ? String(budget.value) : "");
+const monthKey = computed(() => new Date().toISOString().slice(0, 7));
+const monthCost = computed(() =>
+  (overview.value?.byDay ?? [])
+    .filter((row) => row.date.startsWith(monthKey.value))
+    .reduce((sum, row) => sum + (Number(row.cost) || 0), 0),
+);
+const budgetPercent = computed(() => {
+  if (budget.value <= 0) return 0;
+  return Math.min(999, Math.round((monthCost.value / budget.value) * 100));
+});
+const overBudget = computed(() => budget.value > 0 && monthCost.value > budget.value);
+function setBudget() {
+  const next = Number(budgetInput.value);
+  if (Number.isFinite(next) && next > 0) {
+    budget.value = next;
+    localStorage.setItem(BUDGET_KEY, String(next));
+  } else {
+    budget.value = 0;
+    budgetInput.value = "";
+    localStorage.removeItem(BUDGET_KEY);
+  }
+}
+
 const cards = computed(() => [
   { icon: "Clock3", label: t("chat.usage.cardRuns"), value: fmtInt(total.value.runs) },
   { icon: "ArrowUp", label: t("chat.usage.cardInput"), value: fmtTokens(total.value.input) },
@@ -91,6 +118,23 @@ watch(() => props.connected, load);
         </article>
       </div>
 
+      <!-- 月度预算：设置 + 进度 + 超支告警 -->
+      <section class="usage-budget" :class="{ 'usage-budget--over': overBudget }">
+        <header class="usage-budget__head">
+          <h2><AppIcon name="Coins" :size="16" />{{ t("chat.usage.budgetTitle") }}</h2>
+          <form class="usage-budget__set" @submit.prevent="setBudget">
+            <input v-model="budgetInput" type="number" min="0" step="0.01" :placeholder="t('chat.usage.budgetPlaceholder')" :aria-label="t('chat.usage.budgetTitle')" />
+            <button type="submit" :disabled="budgetInput.trim() === ''">{{ t("chat.usage.budgetSet") }}</button>
+          </form>
+        </header>
+        <template v-if="budget > 0">
+          <div class="usage-budget__track"><div class="usage-budget__fill" :class="{ 'usage-budget__fill--over': overBudget }" :style="{ width: Math.min(100, budgetPercent) + '%' }" /></div>
+          <p class="usage-budget__meta">{{ t("chat.usage.budgetMonthCost", { cost: fmtCost(monthCost), budget: fmtCost(budget) }) }} · {{ t("chat.usage.budgetPercent", { percent: budgetPercent }) }}</p>
+          <p v-if="overBudget" class="usage-budget__over" role="alert"><AppIcon name="AlertTriangle" :size="14" />{{ t("chat.usage.budgetOver") }}</p>
+        </template>
+        <p v-else class="usage-budget__hint">{{ t("chat.usage.budgetHint") }}</p>
+      </section>
+
       <div class="usage-grid">
         <section v-if="overview?.byModel.length" class="usage-table-card">
           <header><h2><AppIcon name="Cpu" :size="16" />{{ t("chat.usage.byModel") }}</h2></header>
@@ -131,6 +175,7 @@ watch(() => props.connected, load);
 .usage-error{display:flex;align-items:center;gap:8px;max-width:1120px;margin:0 auto 14px;padding:10px 13px;border-radius:9px;color:#a94343;background:#fff0ef;font-size:13px}
 .usage-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;max-width:1120px;margin:0 auto 22px}.usage-card{display:flex;align-items:center;gap:13px;padding:16px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elevated)}.usage-card-icon{display:grid;width:40px;height:40px;place-items:center;flex:none;border-radius:11px;color:#27805c;background:#eaf6f0}.usage-card>div{display:grid;gap:3px;min-width:0}.usage-card>div>span{color:var(--text-muted);font-size:11px}.usage-card b{font-variant-numeric:tabular-nums;font-size:21px;letter-spacing:-.02em}
 .usage-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:16px;max-width:1120px;margin:0 auto}.usage-table-card{padding:4px 4px 8px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elevated);overflow:hidden}.usage-table-card header h2{display:flex;align-items:center;gap:8px;margin:0;padding:14px 16px 10px;font-size:13px;letter-spacing:.02em;color:var(--text-muted)}.usage-table-card table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}.usage-table-card th,.usage-table-card td{padding:9px 16px;text-align:left;white-space:nowrap}.usage-table-card th{color:var(--text-muted);font-size:11px;font-weight:600}.usage-table-card tbody tr{border-top:1px solid var(--border)}.usage-table-card td:first-child{overflow:hidden;text-overflow:ellipsis;max-width:220px}.usage-table-card td:not(:first-child){text-align:right}.usage-table-card tbody tr:hover{background:var(--surface-soft)}
+.usage-budget{max-width:1120px;margin:0 auto 22px;padding:16px 18px;border:1px solid var(--border);border-radius:14px;background:var(--surface-elevated)}.usage-budget__head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.usage-budget__head h2{display:flex;align-items:center;gap:8px;margin:0;font-size:13px;letter-spacing:.02em;color:var(--text-muted)}.usage-budget__set{display:flex;gap:6px}.usage-budget__set input{width:110px;padding:7px 10px;color:var(--text);background:var(--surface);border:1px solid var(--border);border-radius:9px;font:inherit;outline:none}.usage-budget__set button{padding:7px 12px;border:0;border-radius:9px;color:#fff;background:#202825;font-size:12px;font-weight:600;cursor:pointer}.usage-budget__set button:disabled{opacity:.45;cursor:not-allowed}.usage-budget__track{height:8px;margin:12px 0 8px;border-radius:5px;background:var(--surface-soft);overflow:hidden}.usage-budget__fill{height:100%;border-radius:5px;background:linear-gradient(90deg,#43a77d,#26845e);transition:width .3s ease}.usage-budget__fill--over{background:linear-gradient(90deg,#e5484d,#b23c35)}.usage-budget__meta{margin:0;color:var(--text-muted);font-size:12px}.usage-budget__hint{margin:10px 0 0;color:var(--text-muted);font-size:12px}.usage-budget__over{display:flex;align-items:center;gap:6px;margin:8px 0 0;color:#b23c35;font-size:12px;font-weight:600}.usage-budget--over{border-color:#e8b4b2;background:#fff6f5}
 .usage-empty{display:grid;justify-items:center;max-width:520px;margin:90px auto 0;text-align:center}.usage-empty>span{display:grid;width:58px;height:58px;place-items:center;border-radius:18px;color:#348463;background:#eaf6f0}.usage-empty h2{margin:18px 0 7px}.usage-empty p{margin:0;color:var(--text-muted)}
 .spin{animation:usage-spin 1s linear infinite}@keyframes usage-spin{to{transform:rotate(360deg)}}
 :global([data-app-theme="dark"]) .usage-empty>span,:global([data-app-theme="dark"]) .usage-card-icon{background:#20382e;color:#88c9aa}

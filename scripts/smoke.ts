@@ -368,7 +368,7 @@ async function checkSkills(): Promise<void> {
 
 	// ---- parsing --------------------------------------------------------
 	const builtins = listSkills(process.cwd());
-	check("built-in skills load", builtins.length === 11, builtins.map((s) => s.id).join(", "));
+	check("built-in skills load", builtins.length === 18, builtins.map((s) => s.id).join(", "));
 	check("every skill has a description", builtins.every((s) => s.description.length > 0));
 	check("every skill has a body", builtins.every((s) => s.body.length > 0));
 

@@ -24,4 +24,6 @@ export const session = {
   copyFailed: "复制失败：{message}",
   shareFailed: "分享失败：{message}",
   defaultShareTitle: "Gdouwork 会话",
+  exportConversation: "导出对话",
+  exportFailed: "导出失败：{message}",
 };

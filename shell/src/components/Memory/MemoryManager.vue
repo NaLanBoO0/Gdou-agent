@@ -31,7 +31,11 @@ function fmtDate(value: string): string {
   return new Intl.DateTimeFormat(locale.value, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-const visible = computed(() => filter.value === "all" ? entries.value : entries.value.filter((e) => e.category === filter.value));
+const visible = computed(() => {
+  const list = filter.value === "all" ? entries.value : entries.value.filter((e) => e.category === filter.value);
+  // 最新更新的排前面（桥端 memory.list 保持文件顺序，这里显式排序）
+  return [...list].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+});
 const total = computed(() => entries.value.length);
 
 async function load() {
@@ -97,7 +101,7 @@ watch(() => props.connected, load);
       <article v-for="entry in visible" :key="entry.key" class="memory-card">
         <div class="memory-card-top">
           <span class="memory-category" :class="entry.category"><i />{{ categoryLabel(entry.category) }}</span>
-          <span class="memory-meta">{{ t(entry.source === "manual" ? "memory.sourceManual" : "memory.sourceSummary") }} · {{ fmtDate(entry.updatedAt) }}</span>
+          <span class="memory-meta">{{ t(entry.source === "manual" ? "chat.memory.sourceManual" : "chat.memory.sourceSummary") }} · {{ fmtDate(entry.updatedAt) }}</span>
         </div>
         <template v-if="editing && editing.key === entry.key">
           <label>{{ t("chat.memory.keyLabel") }}<input v-model="editing.key" disabled /></label>

@@ -755,13 +755,37 @@ async function useTool(name: string, params: Record<string, unknown>): Promise<s
 		.join("");
 }
 
-/** Run `git` in the working directory. Rejects non-zero exits as errors. */
-async function git(args: string[]): Promise<string> {
+/** Run `git` in a directory. Rejects non-zero exits as errors. */
+async function git(args: string[], dir = process.cwd()): Promise<string> {
 	const { execFile } = await import("node:child_process");
 	const { promisify } = await import("node:util");
 	const run = promisify(execFile);
-	const { stdout } = await run("git", args, { cwd: process.cwd(), maxBuffer: 8 * 1024 * 1024 });
+	const { stdout } = await run("git", args, { cwd: dir, maxBuffer: 8 * 1024 * 1024 });
 	return stdout;
+}
+
+/**
+ * The working directory a git command should run in for a given workspace.
+ *
+ * Workspace ids are folder paths (see `workspace.open`), so this is the
+ * registry entry or the literal path; unknown ids fall back to the bridge's
+ * own cwd so read-only methods keep working on whatever the bridge launched
+ * from.
+ */
+function gitDirOf(workspaceId: unknown): string {
+	return resolveWorkspaceCwd(workspaceId) ?? process.cwd();
+}
+
+/**
+ * A path git will treat as repository-relative and inside the repo.
+ *
+ * Refuses absolute paths and any `..` component, so a staged/discarded path
+ * cannot escape the workspace's repo boundary.
+ */
+function safeGitPath(path: string): boolean {
+	if (!path) return false;
+	if (path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path)) return false;
+	return !path.replace(/\\/g, "/").split("/").includes("..");
 }
 
 /**
@@ -1087,14 +1111,6 @@ const NOT_IMPLEMENTED: Record<string, string> = {
 	"plugin.install_catalog": "插件市场尚未实现：这里没有插件体系，扩展能力走技能与 MCP。",
 	// Model profiles: we keep one configured spec, not a library of profiles.
 	"provider.ccswitch_apply": "外部配置切换尚未实现。",
-	// Destructive git: refused until an approval step exists.
-	"git.commit": "提交尚未实现：在没有审批步骤之前，不提供一键改写工作区的操作。",
-	"change.stage": "暂存尚未实现：在没有审批步骤之前，不提供一键改写工作区的操作。",
-	"change.unstage": "取消暂存尚未实现：在没有审批步骤之前，不提供一键改写工作区的操作。",
-	"change.discard": "丢弃改动尚未实现：这会直接丢弃未提交的工作，目前不提供。",
-	"change.revert": "回滚尚未实现：这会直接改写工作区，目前不提供。",
-	// Interaction channels the kernel does not have.
-	"session.set_workspace": "切换会话的工作目录尚未实现。",
 };
 
 /** Dispatch one JSON-RPC request to the matching handler. */
@@ -1539,12 +1555,13 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			return reply({ matches: [], text });
 		}
 
-		// ---- git: read-only. The mutating verbs are deliberately absent. ----
+		// ---- git: read-only reads run in the workspace's directory. ----
 
 		case "workspace.status": {
+			const dir = gitDirOf(params.workspace_id);
 			const [branch, porcelain] = await Promise.all([
-				git(["rev-parse", "--abbrev-ref", "HEAD"]).catch(() => ""),
-				git(["status", "--porcelain"]).catch(() => ""),
+				git(["rev-parse", "--abbrev-ref", "HEAD"], dir).catch(() => ""),
+				git(["status", "--porcelain"], dir).catch(() => ""),
 			]);
 			return reply({
 				branch: branch.trim() || null,
@@ -1554,26 +1571,67 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 		}
 
 		case "change.list": {
-			const porcelain = await git(["status", "--porcelain"]).catch(() => "");
+			const dir = gitDirOf(params.workspace_id);
+			const porcelain = await git(["status", "--porcelain"], dir).catch(() => "");
+			// 增减行数：HEAD 视角（staged + unstaged 一起算）。untracked 文件不在
+			// diff 里，前端对它们显示 +0 −0 即可。
+			const numstat = await git(["diff", "--numstat", "HEAD"], dir).catch(() => "");
+			const stats = new Map<string, { additions: number; deletions: number }>();
+			for (const line of numstat.split("\n").filter((l) => l.trim().length > 0)) {
+				const [add, del, path] = line.split("\t");
+				const additions = parseInt(add, 10);
+				const deletions = parseInt(del, 10);
+				if (typeof path === "string" && path && (!Number.isNaN(additions) || !Number.isNaN(deletions))) {
+					stats.set(path, { additions: additions || 0, deletions: deletions || 0 });
+				}
+			}
 			return reply({
 				changes: porcelain
 					.split("\n")
 					.filter((line) => line.trim().length > 0)
 					.map((line) => {
-						const status = line.slice(0, 2).trim();
-						const path = line.slice(3);
-						return { path, status, kind: status.includes("?") ? "added" : "modified" };
+						// porcelain v1: "XY path"，X 是 index（暂存）状态、Y 是 worktree 状态。
+						// shell 的 ChangeSummary 按这两个字段分组"已暂存/未暂存"。
+						const indexStatus = line[0] ?? " ";
+						const worktreeStatus = line[1] ?? " ";
+						let path = line.slice(3);
+						// 重命名形如 "R  old -> new"，路径取箭头后的实际文件。
+						const arrow = path.indexOf(" -> ");
+						if (arrow !== -1) path = path.slice(arrow + 4);
+						const count = stats.get(path);
+						return {
+							path,
+							status: (indexStatus + worktreeStatus).trim() || "M",
+							kind: indexStatus === "?" ? "added" : "modified",
+							index_status: indexStatus,
+							worktree_status: worktreeStatus,
+							additions: count?.additions ?? 0,
+							deletions: count?.deletions ?? 0,
+						};
 					}),
 			});
 		}
 
 		case "change.diff": {
-			const diff = await git(["diff", "--", (params.path as string) ?? ""]).catch(() => "");
+			const dir = gitDirOf(params.workspace_id);
+			const path = typeof params.path === "string" && params.path ? params.path : "";
+			// HEAD-first shows staged + unstaged together; a repo with no commits
+			// yet falls back to the working-tree diff (plain `git diff` is empty
+			// for a staged file, which reads as "no diff" in the shell).
+			const diff = path
+				? await git(["diff", "HEAD", "--", path], dir).catch(() => git(["diff", "--", path], dir)).catch(() => "")
+				: await git(["diff", "HEAD"], dir).catch(() => git(["diff"], dir)).catch(() => "");
 			return reply({ diff });
 		}
 
 		case "git.history": {
-			const log = await git(["log", "--pretty=%H%x1f%an%x1f%ad%x1f%s", "--date=iso", "-n", "50"]).catch(() => "");
+			const dir = gitDirOf(params.workspace_id);
+			const limit = Math.min(Number(params.limit ?? 100), 500);
+			const skip = Math.max(0, Number(params.skip ?? 0));
+			const log = await git(
+				["log", "--pretty=%H%x1f%an%x1f%ad%x1f%s", "--date=iso", "-n", String(limit), `--skip=${skip}`],
+				dir,
+			).catch(() => "");
 			return reply({
 				commits: log
 					.split("\n")
@@ -1582,8 +1640,119 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 						const [hash, author, date, subject] = line.split("");
 						return { hash, author, date, subject };
 					}),
-				has_more: false,
+				has_more: log.split("\n").filter((line) => line.trim().length > 0).length >= limit,
 			});
+		}
+
+		// ---- git: destructive writes. The shell drives these from explicit UI
+		// actions (staging a file, confirming a discard, typing a commit message),
+		// so the user is the approval step — no extra gate between a click and
+		// the working tree. Paths are validated against the repo boundary.
+
+		case "change.stage": {
+			const dir = gitDirOf(params.workspace_id);
+			const paths = (Array.isArray(params.paths) ? params.paths : []).filter((p): p is string => typeof p === "string" && safeGitPath(p));
+			if (!paths.length) return error(-32602, "需要 paths");
+			const staged: string[] = [];
+			const failed: string[] = [];
+			for (const path of paths) {
+				try {
+					await git(["add", "--", path], dir);
+					staged.push(path);
+				} catch {
+					failed.push(path);
+				}
+			}
+			return reply({ staged_paths: staged, failed_paths: failed });
+		}
+
+		case "change.unstage": {
+			const dir = gitDirOf(params.workspace_id);
+			const paths = (Array.isArray(params.paths) ? params.paths : []).filter((p): p is string => typeof p === "string" && safeGitPath(p));
+			if (!paths.length) return error(-32602, "需要 paths");
+			const unstaged: string[] = [];
+			const failed: string[] = [];
+			for (const path of paths) {
+				try {
+					await git(["restore", "--staged", "--", path], dir);
+					unstaged.push(path);
+				} catch {
+					failed.push(path);
+				}
+			}
+			return reply({ unstaged_paths: unstaged, failed_paths: failed });
+		}
+
+		case "change.discard": {
+			if (params.confirm !== "discard") return error(-32602, '需要 confirm: "discard"');
+			const dir = gitDirOf(params.workspace_id);
+			const paths = (Array.isArray(params.paths) ? params.paths : []).filter((p): p is string => typeof p === "string" && safeGitPath(p));
+			if (!paths.length) return error(-32602, "需要 paths");
+			const discarded: string[] = [];
+			const blocked: string[] = [];
+			for (const path of paths) {
+				try {
+					await git(["checkout", "--", path], dir);
+					discarded.push(path);
+				} catch {
+					// Untracked files have nothing to checkout; removing them is a
+					// separate verb (clean) with its own destructive weight, and the
+					// UI's confirm already guards this path.
+					blocked.push(path);
+				}
+			}
+			return reply({ discarded_paths: discarded, blocked_paths: blocked });
+		}
+
+		case "change.revert": {
+			// Undo one turn's changes from the working tree. Only changes that are
+			// still uncommitted can be rolled back this way — a commit that already
+			// happened needs `git revert`/history surgery the shell doesn't offer,
+			// so those paths are reported as blocked rather than touched.
+			if (params.confirm !== "revert") return error(-32602, '需要 confirm: "revert"');
+			const dir = gitDirOf(params.workspace_id);
+			const paths = (Array.isArray(params.paths) ? params.paths : []).filter((p): p is string => typeof p === "string" && safeGitPath(p));
+			if (!paths.length) return error(-32602, "需要 paths");
+			const reverted: string[] = [];
+			const blockedPaths: Record<string, string> = {};
+			for (const path of paths) {
+				const tracked = await git(["ls-files", "--error-unmatch", "--", path], dir).catch(() => "");
+				if (!tracked.trim()) {
+					blockedPaths[path] = "文件未被跟踪，无法回滚";
+					continue;
+				}
+				const statusLine = (await git(["status", "--porcelain", "--", path], dir).catch(() => ""))
+					.split("\n")
+					.find((line) => line.endsWith(path));
+				// A staged change is reverted the same way: checkout restores HEAD.
+				if (statusLine && statusLine.trim().length > 0) {
+					try {
+						await git(["checkout", "--", path], dir);
+						reverted.push(path);
+					} catch {
+						blockedPaths[path] = "回滚失败";
+					}
+				} else {
+					blockedPaths[path] = "改动已提交，无法在工作区直接回滚";
+				}
+			}
+			return reply({ reverted_paths: reverted, blocked_paths: blockedPaths });
+		}
+
+		case "git.commit": {
+			const message = typeof params.message === "string" ? params.message.trim() : "";
+			if (!message) return error(-32602, "需要提交信息");
+			const dir = gitDirOf(params.workspace_id);
+			try {
+				// `-m` passes the message as a single argv (execFile, no shell), so
+				// quoting inside the message is verbatim and multi-line text is kept.
+				const stdout = await git(["commit", "-m", message], dir);
+				const match = stdout.match(/\[[^\]]* ([0-9a-f]{7,})\]/);
+				return reply({ commit_hash: match?.[1] ?? "", output: stdout });
+			} catch (err) {
+				const reason = (err as { stderr?: string; message?: string }).stderr?.trim() || (err as { message?: string }).message || "git commit 失败";
+				return error(-32602, reason);
+			}
 		}
 
 		// ---- artifacts: what the model has handed over this session ----
@@ -1966,6 +2135,28 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			// Runs are not addressable; `run.replay` above has the same limitation.
 			return reply({ run_id: params.run_id ?? "", status: "unknown" });
 
+		case "session.set_workspace": {
+			// Move an open conversation to another project folder. `cwd` is readonly
+			// on the session, so the agent is rebuilt with the same messages and
+			// expert against the new working directory, then persisted so the move
+			// survives a bridge restart. Refused while a run is in flight — swapping
+			// the working tree under a live run would make its tool calls lie.
+			const sessionId = params.session_id as string;
+			if (typeof sessionId !== "string" || !sessionId) return error(-32602, "需要 session_id");
+			const target = resolveWorkspaceCwd(params.workspace_id);
+			if (!target) return error(-32602, "未知的工作区");
+			const live = sessions.get(sessionId);
+			if (!live) return error(-32602, "未知会话");
+			if (live.runId) return error(-32602, "会话正在运行，请先停止再切换工作目录");
+			const expert = live.session.recipe.expert;
+			const messages = [...live.session.agent.state.messages];
+			live.session.dispose();
+			live.session = await buildSession(messages, { expert }, undefined, askUserViaBridge, target);
+			persistLive(sessionId, live);
+			const updated = listSessions().find((item) => item.id === sessionId);
+			return reply({ session: updated ? snapshotOf(updated, storedSessionUsage(sessionId)) : null });
+		}
+
 		case "workspace.profile": {
 			// A package manifest, if there is one, is the honest answer to "what
 			// kind of project is this". Deeper detection (frameworks, entry points)
@@ -1983,14 +2174,6 @@ async function handleRequest(socket: WebSocket, id: string, method: string, para
 			}
 			return reply({ profile: { name, description, components: [], validations: [], findings: [] } });
 		}
-
-		// `git.commit`, `change.stage`, `change.unstage`, `change.discard` and
-		// `change.revert` are **not implemented**, and that is the point. Each
-		// destructively rewrites the user's working tree from a single click in
-		// the shell, with no approval step in between — stage 2 has no I4
-		// (connect-time approval) yet. The shell already renders a friendly
-		// "protocol too old" message for -32601, so an honest refusal here beats
-		// wiring up a button that can throw away uncommitted work.
 
 		case "session.create": {
 			const sessionId = randomUUID();

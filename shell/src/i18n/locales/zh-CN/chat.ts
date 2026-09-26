@@ -53,6 +53,13 @@ export const chat = {
     noDataHint: "完成一次对话后，这里会展示真实的 Token 用量。",
     unknownModel: "未知模型",
     seconds: "{n} 秒",
+    budgetTitle: "月度预算",
+    budgetHint: "按本月费用（美元）设置预算，超出会高亮提醒。",
+    budgetPlaceholder: "例如 5",
+    budgetMonthCost: "本月 {cost} / 预算 {budget}",
+    budgetPercent: "已用 {percent}%",
+    budgetOver: "已超出月度预算",
+    budgetSet: "设置预算",
   },
   memory: {
     title: "用户记忆",
