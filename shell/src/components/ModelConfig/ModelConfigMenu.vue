@@ -57,7 +57,7 @@ async function applyFallback(value: string) {
   }
 }
 
-async function applyReasoning(value: RuntimeSettings["reasoning_effort"]) {
+async function applyReasoning(value: string) {
   if (busy.value || !props.settings) return;
   if (value === props.settings.reasoning_effort) return;
   const slider = root.value?.querySelector<HTMLInputElement>("input[type=range]");
@@ -66,7 +66,7 @@ async function applyReasoning(value: RuntimeSettings["reasoning_effort"]) {
   reasoningApplied.value = false;
   error.value = "";
   try {
-    const settings = await setRuntimeSettings({ reasoning_effort: value });
+    const settings = await setRuntimeSettings({ reasoning_effort: value as RuntimeSettings["reasoning_effort"] });
     if (!settings) throw new Error(t("model.reasoningSaveFailed"));
     reasoningEffort.value = settings.reasoning_effort;
     emit("updated", settings, props.status);

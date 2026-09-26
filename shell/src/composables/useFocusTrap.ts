@@ -30,8 +30,8 @@ export function useFocusTrap() {
     (els[0] ?? root)?.focus();
   }
 
-  function trapTab(event: KeyboardEvent, container: Ref<HTMLElement | null> | (() => HTMLElement | null)) {
-    const root = typeof container === "function" ? container() : container.value;
+  function trapTab(event: KeyboardEvent, container: Ref<HTMLElement | null> | (() => HTMLElement | null) | HTMLElement | null) {
+    const root = typeof container === "function" ? container() : container && "value" in container ? container.value : container;
     if (!root) return;
     const els = focusableElements(root);
     if (!els.length) return;

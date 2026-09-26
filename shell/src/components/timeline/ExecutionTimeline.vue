@@ -443,7 +443,7 @@ const turns = computed<TurnView[]>(() => {
     // 优先使用files字段（带additions/deletions统计），否则从paths构建
     const changeFiles: ChangeFile[] = aggregatedStep.changes?.length
       ? (() => {
-          const allFiles = aggregatedStep.changes!.flatMap((entry) => entry.files ?? entry.paths.map((p) => ({ path: p })));
+          const allFiles = aggregatedStep.changes!.flatMap((entry) => entry.files ?? entry.paths.map((p): ChangeFile => ({ path: p })));
           const map = new Map<string, ChangeFile>();
           for (const f of allFiles) {
             const existing = map.get(f.path);

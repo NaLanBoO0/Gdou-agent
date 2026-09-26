@@ -117,7 +117,7 @@ export class IpcClient {
       if (!pending) return;
       this.pending.delete(message.id);
       window.clearTimeout(pending.timeout);
-      if ("error" in message) pending.reject(new IpcRequestError(message.error.code, message.error.message));
+      if ("error" in message && message.error) pending.reject(new IpcRequestError(message.error.code, message.error.message));
       else pending.resolve(message.result ?? {});
       return;
     }

@@ -28,7 +28,7 @@ import AttachmentChip from "./components/Composer/AttachmentChip.vue";
 import UserQuestionComposer from "./components/UserQuestions/UserQuestionComposer.vue";
 import SourceControlPanel from "./components/SourceControl/SourceControlPanel.vue";
 import { slashMenuItems } from "./components/CommandPalette/slash-menu";
-import type { ContextInjectionEntry, PermissionDecision, PermissionState, PlanItem, TimelineEvent, TimelineStep, ToolCallEntry, UserAttachment, WorkflowTaskEntry } from "./components/timeline/types";
+import type { ChangeEntry, ContextInjectionEntry, PermissionDecision, PermissionState, PlanItem, TimelineEvent, TimelineStep, ToolCallEntry, UserAttachment, WorkflowTaskEntry } from "./components/timeline/types";
 import { isMacOSPlatform } from "./lib/platform";
 import { appendThinkingBatch, appendTokenBatch, createTokenFrameBatcher } from "./utils/timelineStream";
 import { deriveSessionStats } from "./utils/sessionStats";
@@ -158,7 +158,7 @@ const finishedRunIds = new Set<string>();
 const stopRequestedSessions = new Set<string>();
 const deferredRuntimeEvents = new Map<string, RuntimeEvent[]>();
 const historyLoadVersionBySession = new Map<string, number>();
-const sessionLoadingTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const sessionLoadingTimers = new Map<string, number>();
 const historyLoadPromises = new Map<string, Promise<void>>();
 let runtimeTargetSessionId: string | null = null;
 const tokenBatcher = createTokenFrameBatcher(
@@ -710,9 +710,9 @@ function toggleThinkingMenu() {
   launcherPermissionMenuOpen.value = false;
   activePermissionMenuOpen.value = false;
 }
-async function applyThinkingLevel(value: RuntimeSettings["thinking_level"]) {
+async function applyThinkingLevel(value: string) {
   try {
-    const result = await setRuntimeSettings({ thinking_level: value });
+    const result = await setRuntimeSettings({ thinking_level: value as RuntimeSettings["thinking_level"] });
     if (result) runtimeSettings.value = result;
   } catch (error) {
     await showProjectNotice("设置失败", error instanceof Error ? error.message : String(error), "danger");
@@ -1138,7 +1138,7 @@ function addUserMessage(content: string, sessionId: string, attachments?: UserAt
 }
 function hydrateTimeline(
   messages: unknown[],
-  runStats: Record<string, { input_tokens: number; output_tokens: number; cache_read_input_tokens: number; elapsed_s: number; context_pct: number }> = {},
+  runStats: Record<string, Record<string, unknown>> = {},
   contextInjections: Array<Record<string, unknown>> = [],
   sessionId: string | null = activeId.value,
 ) {
@@ -1296,7 +1296,7 @@ function hydrateTimeline(
     }
 
     const events: TimelineEvent[] = [
-      ...visibleBlocks.flatMap((block, index) => {
+      ...visibleBlocks.flatMap((block, index): TimelineEvent[] => {
         if (String(block.type) === "text" && blockText(block)) return [{ id: `text-${step}-${index}`, kind: "text" as const, text: blockText(block) }];
         if (String(block.type) === "thinking" && typeof block.thinking === "string" && block.thinking) return [{ id: `thinking-${step}-${index}`, kind: "thinking" as const, text: block.thinking }];
         if (String(block.type) === "tool_use") return [{ id: `tool-${String(block.id ?? block.tool_use_id ?? index)}`, kind: "tool" as const, toolCallId: String(block.id ?? block.tool_use_id ?? index) }];
@@ -1842,16 +1842,19 @@ async function loadSessionHistory(sessionId: string) {
     }
     for (const rid of runIds) {
       try {
-        const changes = await listChanges(wsId.value, rid);
+        const wsId = liveSessions.value.find((s) => s.session_id === sessionId)?.workspace_id ?? "";
+        const changes = await listChanges(wsId, rid);
         if (historyLoadVersionBySession.get(sessionId) !== version) return;
         const stepEntry = [...view.timeline.entries()].find(([, s]) => s.runId === rid);
         if (!stepEntry || !changes.length) continue;
         const [stepNum, step] = stepEntry;
         const existing = step.changes ?? [];
-        const existingPaths = new Set(existing.map((c) => c.path.toLowerCase()));
+        const existingPaths = new Set(existing.flatMap((c) => c.paths).map((p) => p.toLowerCase()));
         const merged: ChangeEntry[] = [...existing];
         for (const ch of changes) {
-          if (!existingPaths.has(ch.path.toLowerCase())) merged.push(ch);
+          if (!existingPaths.has(ch.path.toLowerCase())) {
+            merged.push({ paths: [ch.path], workspacePath: "", files: [{ path: ch.path, additions: ch.additions, deletions: ch.deletions }] });
+          }
         }
         view.timeline.set(stepNum, { ...step, changes: merged });
       } catch { /* ignore list changes errors for historical runs */ }
@@ -2577,7 +2580,6 @@ async function handleRetry(runId: string, userMessage: string) {
             ...emptyStep(stepNum),
             userMessage: item.userMessage,
             userMessageTime: item.userMessageTime,
-            permissionMode: item.permissionMode,
           };
           next.set(stepNum, resetStep);
         }
@@ -2595,7 +2597,7 @@ async function handleRetry(runId: string, userMessage: string) {
     nextTick(() => {
       keepTaskStreamAtBottom();
     });
-    await submitTask(userMessage, null);
+    await submitTask(userMessage, "");
   } catch (error) {
     void showProjectNotice(t("app.retryFailed"), friendlyError(error).message, "danger");
   }
@@ -2616,7 +2618,7 @@ async function handleBranch(turn: { runId?: string; userMessage?: string; text: 
 }
 // 中断任务的"继续执行"：向当前会话补发一条续跑消息，复用交接摘要作为上下文
 function handleContinue() {
-  void submitTask("继续", null);
+  void submitTask("继续", "");
 }
 // 所有变更审阅统一进入右上角 Git 源代码管理页
 function handleReview() {
@@ -3465,7 +3467,6 @@ function handleDocumentPointerDown(event: PointerEvent) {
   if (!target?.closest(".active-permission-control")) activePermissionMenuOpen.value = false;
   if (!target?.closest(".thinking-control")) thinkingMenuOpen.value = false;
   if (!target?.closest(".expert-picker")) expertMenuOpen.value = false;
-  if (!target?.closest(".mode-switch-wrap")) modeMenuOpen.value = false;
 }
 let stopEvents: (() => void) | undefined;
 let stopDisconnect: (() => void) | undefined;
@@ -4010,7 +4011,7 @@ watch(activeWorkspace, (project) => {
                     @submit="submitUserQuestion(activeUserQuestion, $event)"
                     @stop="stopActiveRun"
                   />
-                    <form v-else class="gdou-composer active-composer" :class="{ 'append-mode': isAppending, 'drag-over': isDragOver }" @submit.prevent="submit" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
+                    <form v-else class="gdou-composer active-composer" :class="{ 'append-mode': isAppending, 'drag-over': isDragOver }" @submit.prevent="submit()" @dragenter="onDragEnter" @dragover="onDragOver" @dragleave="onDragLeave" @drop="onDrop">
                       <SlashCommandMenu v-if="slashMenuOpen" :query="slashQuery ?? ''" :skills="composerSkills" :loading="skillQueryLoading" :error="skillQueryError" :connected="connected" :active-index="slashMenuActiveIndex" @activate="slashMenuActiveIndex = $event" @select="chooseSkill" />
                       <div class="composer-input-shell" :class="{ 'has-plugin-tags': insertedPlugins.length, 'has-skill-tag': selectedSkill }">
                         <div v-if="attachedFiles.length" class="attachment-strip"><AttachmentChip v-for="(file, index) in attachedFiles" :key="file.path" :file="file" @remove="removeAttachment(index)" /></div>

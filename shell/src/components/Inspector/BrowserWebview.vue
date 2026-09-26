@@ -26,7 +26,7 @@ export interface PickedElement {
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Webview, getAllWebviews } from "@tauri-apps/api/webview";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getCurrentWindow, LogicalPosition, LogicalSize } from "@tauri-apps/api/window";
 import { nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
 const props = defineProps<{
@@ -357,8 +357,8 @@ async function positionWebview(instance = webview) {
   const rect = host.value.getBoundingClientRect();
   if (rect.width < 1 || rect.height < 1) return;
   await Promise.all([
-    instance.setPosition({ type: "Logical", x: rect.left, y: rect.top }),
-    instance.setSize({ type: "Logical", width: rect.width, height: rect.height }),
+    instance.setPosition(new LogicalPosition(Math.round(rect.left), Math.round(rect.top))),
+    instance.setSize(new LogicalSize(Math.round(rect.width), Math.round(rect.height))),
   ]);
 }
 

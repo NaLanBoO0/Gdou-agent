@@ -51,6 +51,7 @@ function toggleGroup(id: string) {
   openGroups.value = next;
 }
 function isGroupOpen(segment: PipelineSegment): boolean {
+  if (segment.kind !== "tools") return openGroups.value.has(segment.id);
   // 有工具在跑时强制展开，让当前动作始终可见
   if (segment.calls.some((call) => call.status === "running" || call.status === "awaiting_permission")) return true;
   return openGroups.value.has(segment.id);
@@ -89,6 +90,7 @@ const turns = computed<Turn[]>(() => {
 });
 
 function groupTitle(segment: PipelineSegment): string {
+  if (segment.kind !== "tools") return "";
   const count = segment.calls.length;
   if (segment.category === "write") return t("timeline.pipeline.groupWrite", { count });
   if (segment.category === "verify") return t("timeline.pipeline.groupVerify", { count });
@@ -97,6 +99,7 @@ function groupTitle(segment: PipelineSegment): string {
 }
 
 function groupProgress(segment: PipelineSegment): number {
+  if (segment.kind !== "tools") return 0;
   return segment.calls.filter((call) => call.status === "done" || call.status === "failed").length;
 }
 

@@ -212,7 +212,9 @@ watch([thinkingPreview, thinkingRunning], () => {
 </script>
 
 <template>
-  <div v-if="hasContent" class="activity-phase" :class="{ open, running: running, done: completed && !running, failed: hasFailedCalls, thinking: !!thinking }">
+  <!-- 注意：状态类用 has-thinking 而非 thinking，避免与 workbench.css 全局 .thinking（composer 按钮）同名冲突，
+       否则 .activity-phase 会被钉成 30px 高 inline-flex 行，展开的 body 垂直居中向上溢出覆盖正文 -->
+  <div v-if="hasContent" class="activity-phase" :class="{ open, running, done: completed && !running, failed: hasFailedCalls, 'has-thinking': !!thinking }">
     <button
       type="button"
       class="activity-phase__trigger"
@@ -264,8 +266,11 @@ watch([thinkingPreview, thinkingRunning], () => {
 
     <transition name="phase-expand">
       <div v-if="open" class="activity-phase__body">
-        <!-- 思考过程（展开后显示完整内容） -->
+        <!-- 思考过程（展开后显示完整内容）：独立标签 + 独立容器，与正文视觉分离 -->
         <div v-if="thinking" class="activity-phase__thinking">
+          <div class="activity-phase__section-label">
+            <AppIcon name="Brain" :size="11" /> {{ t('timeline.thinking.label') }}
+          </div>
           <pre class="activity-phase__thinking-text">{{ displayedThinking }}</pre>
         </div>
         <!-- 工具调用列表 -->
@@ -282,6 +287,10 @@ watch([thinkingPreview, thinkingRunning], () => {
 
 <style scoped>
 .activity-phase {
+  /* 显式声明块级布局：防止任何全局裸类（如 .thinking 的 inline-flex + height:30px）误应用于状态类
+     导致的 flex 垂直居中溢出；scoped 特异性高于全局类，这里直接覆盖 */
+  display: block;
+  height: auto;
   margin: 1px 0 4px;
   font-size: 12px;
 }
@@ -445,11 +454,11 @@ watch([thinkingPreview, thinkingRunning], () => {
 }
 
 /* 思考中扫光效果 */
-.activity-phase.running.thinking .activity-phase__trigger {
+.activity-phase.running.has-thinking .activity-phase__trigger {
   position: relative;
   overflow: hidden;
 }
-.activity-phase.running.thinking .activity-phase__trigger::after {
+.activity-phase.running.has-thinking .activity-phase__trigger::after {
   content: "";
   position: absolute;
   inset-block: 0;
@@ -482,7 +491,7 @@ watch([thinkingPreview, thinkingRunning], () => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin: 4px 0 2px;
+  margin: 6px 0 4px;
   color: #9ca3af;
   font-size: 10px;
   font-weight: 500;
@@ -493,20 +502,20 @@ watch([thinkingPreview, thinkingRunning], () => {
 .activity-phase__thinking {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
 }
 
 .activity-phase__thinking-text {
   margin: 0;
-  padding: 6px 10px;
-  color: #6b7280;
-  background: #f9fafb;
-  border: 1px solid #f3f4f6;
-  border-radius: 6px;
-  font: 12px/1.7 var(--font-ui, "Microsoft YaHei UI"), "SF Mono", Consolas, sans-serif;
+  padding: 10px 12px;
+  color: #5b6472;
+  background: #f7f8fa;
+  border: 1px solid #e7e9ed;
+  border-radius: 8px;
+  font: 12.5px/1.7 var(--font-ui, "Microsoft YaHei UI"), "SF Mono", Consolas, sans-serif;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 240px;
+  max-height: 260px;
   overflow: auto;
 }
 
@@ -533,7 +542,7 @@ watch([thinkingPreview, thinkingRunning], () => {
 .phase-expand-enter-to,
 .phase-expand-leave-from {
   opacity: 1;
-  max-height: 1000px;
+  max-height: 2000px;
 }
 
 /* 暗色主题 */
@@ -599,7 +608,7 @@ watch([thinkingPreview, thinkingRunning], () => {
   background: #1f2937;
   border-color: #374151;
 }
-:global([data-app-theme="dark"] .activity-phase.running.thinking .activity-phase__trigger::after){
+:global([data-app-theme="dark"] .activity-phase.running.has-thinking .activity-phase__trigger::after){
   background: linear-gradient(
     90deg,
     transparent 0%,
@@ -613,7 +622,7 @@ watch([thinkingPreview, thinkingRunning], () => {
   .phase-expand-leave-active {
     transition: none;
   }
-  .activity-phase.running.thinking .activity-phase__trigger::after {
+  .activity-phase.running.has-thinking .activity-phase__trigger::after {
     animation: none;
   }
 }

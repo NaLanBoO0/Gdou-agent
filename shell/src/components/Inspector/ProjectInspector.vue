@@ -47,6 +47,9 @@ type WorkspaceTab = { key: ActiveTab; kind: "summary" | "files" | "browser" | "s
 type Artifact = { path: string; source: "change" | "attachment"; change?: ChangeSummary; previewPath?: string };
 
 const activeTab = ref<ActiveTab>("home");
+// 独立 computed：header 的 v-if 用它判断，避免 `activeTab !== 'home'` 把类型收窄掉
+// 'home'，导致 header 内再比较 `activeTab === 'home'` 报无交集。
+const isHome = computed(() => activeTab.value === "home");
 const browserSequence = ref(0);
 const sandboxSequence = ref(0);
 const browserTabs = ref<BrowserTab[]>([]);
@@ -617,7 +620,7 @@ async function loadArtifact(artifact: Artifact) {
     if (artifact.change) {
       preview.value = await changeDiff(props.workspaceId, artifact.previewPath);
     } else {
-      const result = await readFile(props.workspaceId, artifact.previewPath);
+      const result = await readFile(props.workspaceId, artifact.previewPath ?? "");
       preview.value = result.content;
       previewEncoding.value = result.encoding;
       previewBinary.value = result.binary;
@@ -735,7 +738,7 @@ defineExpose({ openUrlInAppBrowser, openFiles, openBrowser, openTerminal, previe
 
 <template>
   <aside class="project-inspector file-rail" :class="{ 'is-expanded': expandedPanel }">
-    <header v-if="activeTab !== 'home'" class="workspace-tab-strip">
+    <header v-if="!isHome" class="workspace-tab-strip">
       <div ref="toolMenuRoot" class="workspace-tool-menu-root">
         <button type="button" class="workspace-tool-menu-trigger" :class="{ active: toolMenuOpen }" aria-label="打开功能" aria-haspopup="menu" :aria-expanded="toolMenuOpen" @click="toolMenuOpen = !toolMenuOpen"><AppIcon name="Plus" :size="16" :filled="toolMenuOpen" /></button>
         <nav v-if="toolMenuOpen" class="workspace-tool-menu" aria-label="选择功能" role="menu">

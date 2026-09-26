@@ -107,7 +107,7 @@ export async function message(message: string, options?: { title?: string; kind?
   window.alert(message);
 }
 
-export async function open(options?: { multiple?: boolean; directory?: boolean; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | string[] | null> {
+export async function open(options?: { multiple?: boolean; directory?: boolean; title?: string; filters?: Array<{ name: string; extensions: string[] }> }): Promise<string | string[] | null> {
   if (IS_TAURI) {
     const { open: tauriOpen } = await import("@tauri-apps/plugin-dialog");
     return tauriOpen(options);

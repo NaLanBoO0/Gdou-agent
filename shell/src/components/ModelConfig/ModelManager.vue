@@ -437,7 +437,7 @@ onMounted(() => {
                     <img v-if="v.logo" :src="v.logo" alt="" />
                   </button>
                   <button v-for="item in customModelIcons" :key="item.id" type="button" class="mm-icon-option" :class="{ active: icon === item.id }" role="radio" :aria-checked="icon === item.id" :aria-label="iconLabel(item.id)" :title="iconLabel(item.id)" @click="icon = item.id">
-                    <component :is="item.component" :size="18" />
+                    <AppIcon :name="item.icon" :size="18" />
                   </button>
                 </div>
               </div>
