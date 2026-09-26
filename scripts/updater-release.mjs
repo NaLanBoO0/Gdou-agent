@@ -35,12 +35,12 @@ if (!existsSync(keyPath)) {
   process.exit(1);
 }
 
-// 1. minisign 签名 → <installer>.minisig
+// 1. minisign 签名 → <installer>.minisig 或 <installer>.sig
 // 直接经 node 跑 Tauri CLI 入口，绕开 npx/.cmd 的平台差异；私钥经 --private-key-path 显式传入。
-// 注意：tauri signer sign 在非交互（后台/无 TTY）环境下会静默挂起（读 stdin 等待），
-// 所以这里给它 8 秒超时；超时则提示在真实终端手动执行。
+// 注意：tauri signer sign 在非交互（后台/无 TTY）环境下会静默挂起（等待密码输入），
+// 所以这里给它 8 秒超时；超时则提示在真实终端手动执行（无密码密钥在 Password: 处回车）。
 const tauriCli = join(shellDir, "node_modules", "@tauri-apps", "cli", "tauri.js");
-const sigPath = `${installer}.minisig`;
+const sigPath = existsSync(`${installer}.minisig`) ? `${installer}.minisig` : `${installer}.sig`;
 if (!existsSync(sigPath)) {
   if (!existsSync(tauriCli)) {
     console.error(`找不到 Tauri CLI：${tauriCli}`);
@@ -54,9 +54,10 @@ if (!existsSync(sigPath)) {
     child.on("error", () => { clearTimeout(timer); resolve(false); });
   });
   if (!signed || !existsSync(sigPath)) {
-    console.error(`\n自动签名失败（tauri signer sign 在非交互终端可能挂起）。\n请在真实终端手动执行后重跑本脚本：\n`);
+    console.error(`\n自动签名失败（tauri signer sign 在非交互终端会等待密码输入而挂起）。\n请在真实终端手动执行后重跑本脚本：\n`);
     console.error(`  cd shell`);
-    console.error(`  npx tauri signer sign --private-key-path "${keyPath}" "${installer}"\n`);
+    console.error(`  npx tauri signer sign --private-key-path "${keyPath}" --app-version ${version} "${installer}"`);
+    console.error(`  （密钥无密码时在 Password: 提示处直接回车）\n`);
     process.exit(1);
   }
 }
