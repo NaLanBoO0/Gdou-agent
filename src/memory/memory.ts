@@ -128,11 +128,15 @@ export function loadNotesFacts(): NoteFact[] {
  *
  * Merges auto-extracted memory with hand-written notes, so what the model
  * stored with `save_note` and what the kernel distilled after conversations
- * are one view of the user, not two competing ones.
+ * are one view of the user, not two competing ones. The same key can exist in
+ * both stores (the summary distilled a fact the user then corrected by hand);
+ * notes win — a manual correction must beat an automatic extraction, and a
+ * prompt with two contradicting lines under one key would read as noise.
  */
 export function memoryPromptBlock(memory: MemoryEntry[], notes: NoteFact[] = []): string {
-	const memoryLines = memory.map((entry) => `- ${entry.key}: ${entry.value}`);
-	const noteLines = notes.map((entry) => `- ${entry.key}: ${entry.value}`);
-	const lines = [...memoryLines, ...noteLines];
+	const byKey = new Map<string, string>();
+	for (const entry of memory) byKey.set(entry.key, entry.value);
+	for (const entry of notes) byKey.set(entry.key, entry.value);
+	const lines = [...byKey.entries()].map(([key, value]) => `- ${key}: ${value}`);
 	return ["", "---", "", "## User memory", "", "Facts about the person you are talking to, kept across conversations.", "Treat them as true until the user corrects them; never ask again for something recorded here.", "", ...lines].join("\n");
 }

@@ -1661,6 +1661,9 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
   现在 `memoryPromptBlock` 合并两处渲染进同一段 User memory，`summarizeMemory` 的
   已有记忆也含 notes（提炼时不再重复生成同一条）。实测：notes 的 3 条（含「沈哥」）
   全部出现在新会话 system prompt。
+- **同 key 合并去重**（2026-09-26）：同一事实可能同时存在于 memory（自动提炼）与
+  notes（手动更正），直接拼接会在 prompt 出现两行矛盾的同名事实。`memoryPromptBlock`
+  改为按 key 合并，**notes 覆盖 memory**——手动更正必须压过自动提炼。
 
 ---
 
