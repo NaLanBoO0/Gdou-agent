@@ -65,7 +65,7 @@ import { installSkill, loadSkills, uninstallSkill } from "../src/skills/registry
 import { listExperts } from "../src/experts/registry.ts";
 import { approveMcpServer, approvedMcpServers, loadMcpConfig } from "../src/index.ts";
 import { askUserTool, type AskUserQuestion } from "../src/index.ts";
-import { deleteMemory, loadMemory, upsertMemory } from "../src/index.ts";
+import { deleteMemory, loadMemory, loadNotesFacts, upsertMemory } from "../src/index.ts";
 import { deleteTask, dueTasks, getTask, listTasks, updateTaskResult, upsertTask } from "../src/automation/schedule.ts";
 import type { ScheduledTask } from "../src/automation/schedule.ts";
 import type { Settings } from "../src/config/settings.ts";
@@ -975,7 +975,7 @@ async function summarizeMemory(sessionId: string, live: LiveSession, fromIndex: 
 			.join("\n")
 			.slice(0, 12000);
 		if (dialogue.trim().length < 40) return;
-		const existing = loadMemory().map((entry) => `- ${entry.key}: ${entry.value}`).join("\n") || "（无）";
+		const existing = [...loadMemory().map((entry) => `- ${entry.key}: ${entry.value}`), ...loadNotesFacts().map((entry) => `- ${entry.key}: ${entry.value}`)].join("\n") || "（无）";
 		const prompt = [
 			"从下面的对话中提取关于用户的新信息（称呼、语言、时区、技术栈、项目背景、偏好等）。",
 			"只输出已有记忆中缺失或需要更新的条目，输出严格 JSON 数组，每个元素 {\"key\": string, \"value\": string, \"category\": \"profile\"|\"preference\"|\"project\"|\"fact\"}。",

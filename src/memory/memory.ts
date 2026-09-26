@@ -14,7 +14,7 @@
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { AGENT_HOME } from "../paths.ts";
+import { AGENT_HOME, notesPath } from "../paths.ts";
 
 /** What kind of fact an entry holds; the management UI groups by it. */
 export type MemoryCategory = "profile" | "preference" | "project" | "fact";
@@ -92,8 +92,47 @@ export function deleteMemory(key: string): void {
 	writeEntries(readEntries().filter((entry) => entry.key !== key));
 }
 
-/** One-line rendering for the injected prompt paragraph. */
-export function memoryPromptBlock(entries: MemoryEntry[]): string {
-	const lines = entries.map((entry) => `- ${entry.key}: ${entry.value}`);
+/** A fact the user stored by hand via the `save_note` tool. */
+export interface NoteFact {
+	key: string;
+	value: string;
+}
+
+/**
+ * The manual scratchpad entries (`save_note`/`list_notes`, notes.json).
+ *
+ * These are the facts the model chose to remember — e.g. "user is called 沈哥"
+ * — and they belong in the same injection as the auto-extracted memory, or the
+ * two stores drift apart: a name saved through the tool would never reach the
+ * next session's prompt because memory.json never saw it.
+ */
+export function loadNotesFacts(): NoteFact[] {
+	try {
+		const raw = readFileSync(notesPath(), "utf-8");
+		const parsed: unknown = JSON.parse(raw);
+		if (!Array.isArray(parsed)) return [];
+		return parsed
+			.filter((item): item is NoteFact => {
+				if (typeof item !== "object" || item === null) return false;
+				const entry = item as Record<string, unknown>;
+				return typeof entry.key === "string" && typeof entry.value === "string" && entry.value.trim().length > 0;
+			})
+			.map((entry) => ({ key: entry.key, value: entry.value }));
+	} catch {
+		return [];
+	}
+}
+
+/**
+ * One-line rendering for the injected prompt paragraph.
+ *
+ * Merges auto-extracted memory with hand-written notes, so what the model
+ * stored with `save_note` and what the kernel distilled after conversations
+ * are one view of the user, not two competing ones.
+ */
+export function memoryPromptBlock(memory: MemoryEntry[], notes: NoteFact[] = []): string {
+	const memoryLines = memory.map((entry) => `- ${entry.key}: ${entry.value}`);
+	const noteLines = notes.map((entry) => `- ${entry.key}: ${entry.value}`);
+	const lines = [...memoryLines, ...noteLines];
 	return ["", "---", "", "## User memory", "", "Facts about the person you are talking to, kept across conversations.", "Treat them as true until the user corrects them; never ask again for something recorded here.", "", ...lines].join("\n");
 }

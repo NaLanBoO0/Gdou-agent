@@ -1656,6 +1656,11 @@ promise，答案作为工具结果文本回到模型，run 继续。`question.pe
 - **实测闭环**（2026-09-24）：对话「我叫 Nala，用中文，在做 gdou-agent 项目」→
   自动提炼出 `user_name=Nala`（profile）、`user_language=中文`（preference）、
   `project_gdou_agent=…`（project）；新会话 system prompt 注入上述事实。
+- **notes 打通**（2026-09-26）：手动的 `save_note`/`list_notes`（notes.json）此前与
+  memory.json 是两套独立系统，模型手动存的事实（如「用户叫沈哥」）不会进入注入。
+  现在 `memoryPromptBlock` 合并两处渲染进同一段 User memory，`summarizeMemory` 的
+  已有记忆也含 notes（提炼时不再重复生成同一条）。实测：notes 的 3 条（含「沈哥」）
+  全部出现在新会话 system prompt。
 
 ---
 

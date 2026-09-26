@@ -121,11 +121,13 @@ export { saveNoteTool, listNotesTool } from "./tools/notes.ts";
 export {
 	deleteMemory,
 	loadMemory,
+	loadNotesFacts,
 	memoryPromptBlock,
 	memorySnapshot,
 	upsertMemory,
 	type MemoryCategory,
 	type MemoryEntry,
+	type NoteFact,
 } from "./memory/memory.ts";
 
 // Front-ends

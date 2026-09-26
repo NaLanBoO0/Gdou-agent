@@ -21,7 +21,7 @@ import { delegateTool } from "../tools/delegate.ts";
 import { askUserTool, type AskUserQuestion } from "../tools/ask-user.ts";
 import { MUTATING_TOOLS, snapshotBefore, summarizeChange } from "./changes.ts";
 import { CONTEXT_BUDGET_CHARS, type ContextStatus, pruneForContext } from "./context.ts";
-import { memoryPromptBlock, memorySnapshot } from "../memory/memory.ts";
+import { memoryPromptBlock, memorySnapshot, loadNotesFacts } from "../memory/memory.ts";
 import { translate, type AgentEvent, type AgentEventListener } from "./events.ts";
 import { type FallbackReport, withModelFallback } from "./fallback.ts";
 import { LoopGuard, DEFAULT_LOOP_REPEAT_LIMIT, loopBlockReason } from "./loop-guard.ts";
@@ -455,7 +455,9 @@ function assemble(
 	// Automatic user memory: facts recorded from earlier conversations, injected
 	// so the agent is not a blank slate at session start. Empty until the first
 	// summary pass runs, so the prompt block is simply absent for most sessions.
-	const memoryPromptText = memoryPromptBlock(memorySnapshot());
+	// Hand-written notes ride along: `save_note` facts and auto-extracted memory
+	// are one view of the user, not two competing stores.
+	const memoryPromptText = memoryPromptBlock(memorySnapshot(), loadNotesFacts());
 
 	// `load_skill` rides along with the mode's own tools. It is not part of the
 	// mode's set because it is not a capability the mode decides — every session
