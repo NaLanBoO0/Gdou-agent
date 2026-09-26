@@ -948,7 +948,7 @@
   box-shadow: none;
 }
 .gdou-main.chat-main, .chat-main { border: 1px solid #e2e5e8; }
-.sidebar-brand { display: flex; align-items: center; min-height: 32px; padding: 0 1px 0 14px; transform: translateY(-4px); }
+.sidebar-brand { display: flex; align-items: center; min-height: 32px; padding: 0 1px 0 14px; transform: translateY(0); }
 .sidebar-beta-badge { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; height: 18px; margin-left: 8px; padding: 0 9px; border-radius: 999px; color: #111827; background: #cce8f7; font-size: 11px; font-weight: 600; line-height: 18px; letter-spacing: 0; }
 .gdou-shell.is-macos .sidebar-brand { min-height: 36px; padding-top: 0; }
 .sidebar-brand h1 { margin: 0; min-width: 0; overflow: hidden; color: var(--accent); font-family: "Aptos Display", "Microsoft YaHei UI", sans-serif; font-size: 15px; font-weight: 650; letter-spacing: 0; text-overflow: ellipsis; white-space: nowrap; }
